@@ -1,0 +1,14 @@
+# Ignore large / irrelevant paths when packaging workloads for remote run.
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.h5
+data/
+datasets/
+.cache/
+wandb/
+runs/
+output/
+outputs/

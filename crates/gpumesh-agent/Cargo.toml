@@ -1,0 +1,21 @@
+[package]
+name = "gpumesh-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GPUMesh provider agent daemon"
+
+[[bin]]
+name = "gpumesh-agent"
+path = "src/main.rs"
+
+[dependencies]
+gpumesh-common.workspace = true
+gpumesh-core.workspace = true
+gpumesh-network.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+rustls.workspace = true

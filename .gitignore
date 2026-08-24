@@ -1,0 +1,16 @@
+/target/
+**/target/
+Cargo.lock
+.gpumesh/
+**/.gpumesh/
+*.gpk
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+services/control-plane/control-plane
+*.exe
+*.pdb
+__pycache__/
+.venv/

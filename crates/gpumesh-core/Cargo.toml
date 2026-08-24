@@ -1,0 +1,26 @@
+[package]
+name = "gpumesh-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared domain orchestration for GPUMesh nodes"
+
+[dependencies]
+gpumesh-common.workspace = true
+gpumesh-security.workspace = true
+gpumesh-protocol.workspace = true
+gpumesh-storage.workspace = true
+gpumesh-gpu.workspace = true
+gpumesh-runtime.workspace = true
+gpumesh-network.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+futures.workspace = true
+uuid.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+hex.workspace = true
+sha2.workspace = true

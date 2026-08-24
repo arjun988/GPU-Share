@@ -1,0 +1,26 @@
+[package]
+name = "gpumesh-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GPUMesh CLI — share and consume peer GPU compute"
+
+[[bin]]
+name = "gpumesh"
+path = "src/main.rs"
+
+[dependencies]
+gpumesh-common.workspace = true
+gpumesh-core.workspace = true
+gpumesh-security.workspace = true
+gpumesh-storage.workspace = true
+gpumesh-gpu.workspace = true
+gpumesh-network.workspace = true
+gpumesh-runtime.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+rustls.workspace = true
+serde_json.workspace = true
