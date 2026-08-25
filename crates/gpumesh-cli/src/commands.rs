@@ -75,6 +75,8 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
         Commands::Share {
             max_vram,
             max_gpu_utilization,
+            public,
+            region,
             action,
         } => match action {
             Some(ShareAction::Stop) => {
@@ -83,8 +85,16 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
                 ui::ok("Sharing stopped.");
                 Ok(())
             }
-            None => run_share_loop(max_vram, max_gpu_utilization).await,
+            None => run_share_loop(max_vram, max_gpu_utilization, public, region).await,
         },
+        Commands::Search {
+            gpu,
+            vram,
+            cuda,
+            region,
+            idle,
+            json,
+        } => search_public(gpu, vram, cuda, region, idle, json).await,
         Commands::PairCode => {
             ui::print_banner();
             let mut node = MeshNode::bootstrap().await?;
@@ -478,7 +488,9 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
             share,
             max_vram,
             max_gpu_utilization,
-        } => run_agent(share, max_vram, max_gpu_utilization).await,
+            public,
+            region,
+        } => run_agent(share, max_vram, max_gpu_utilization, public, region).await,
     }
 }
 
@@ -522,6 +534,8 @@ fn config_get(cfg: &gpumesh_common::NodeConfig, key: &str) -> Result<String> {
         "max_concurrent_jobs" => cfg.max_concurrent_jobs.to_string(),
         "default_retries" => cfg.default_retries.to_string(),
         "sharing_enabled" => cfg.sharing_enabled.to_string(),
+        "public_listing" => cfg.public_listing.to_string(),
+        "region" => cfg.region.clone().unwrap_or_default(),
         "update_url" => cfg.update_url.clone().unwrap_or_default(),
         other => bail!("unknown key: {other}"),
     };
@@ -543,6 +557,14 @@ fn config_set(cfg: &mut gpumesh_common::NodeConfig, key: &str, value: &str) -> R
         "max_concurrent_jobs" => cfg.max_concurrent_jobs = value.parse()?,
         "default_retries" => cfg.default_retries = value.parse()?,
         "sharing_enabled" => cfg.sharing_enabled = value.parse()?,
+        "public_listing" => cfg.public_listing = value.parse()?,
+        "region" => {
+            cfg.region = if value.is_empty() {
+                None
+            } else {
+                Some(value.into())
+            }
+        }
         "update_url" => {
             cfg.update_url = if value.is_empty() {
                 None
@@ -559,14 +581,18 @@ fn config_set(cfg: &mut gpumesh_common::NodeConfig, key: &str, value: &str) -> R
 async fn run_share_loop(
     max_vram: Option<String>,
     max_gpu_utilization: Option<u8>,
+    public: bool,
+    region: Option<String>,
 ) -> Result<()> {
-    run_agent(true, max_vram, max_gpu_utilization).await
+    run_agent(true, max_vram, max_gpu_utilization, public, region).await
 }
 
 async fn run_agent(
     share: bool,
     max_vram: Option<String>,
     max_gpu_utilization: Option<u8>,
+    public: bool,
+    region: Option<String>,
 ) -> Result<()> {
     ui::print_banner();
     let mut node = MeshNode::bootstrap()
@@ -574,7 +600,16 @@ async fn run_agent(
         .context("run `gpumesh init` first")?;
     node.start_network().await?;
     if share {
-        node.enable_share(max_vram, max_gpu_utilization).await?;
+        if public {
+            let cfg = node.config.read().await.clone();
+            if cfg.rendezvous_url.is_none() {
+                bail!(
+                    "--public requires rendezvous_url. Set with:\n  gpumesh config set rendezvous_url http://127.0.0.1:8080"
+                );
+            }
+        }
+        node.enable_share(max_vram, max_gpu_utilization, public, region)
+            .await?;
         let cfg = node.config.read().await.clone();
         let gpus = MeshNode::detect_gpus().unwrap_or_default();
         if let Some(g) = gpus.first() {
@@ -588,8 +623,19 @@ async fn run_agent(
                 "Available",
                 format!("{} GB", (avail as f64 / 1024.0).round()),
             );
+            if let Some(c) = &g.cuda_version {
+                ui::kv("CUDA", c);
+            }
         }
-        ui::ok("Sharing enabled — waiting for authorized peers…");
+        if public {
+            ui::ok("Public listing enabled (metadata only)");
+            if let Some(r) = &cfg.region {
+                ui::kv("Region", r);
+            }
+            ui::dim("Listing ≠ authorization — peers must still pair to run jobs.");
+        } else {
+            ui::ok("Sharing enabled — waiting for authorized peers…");
+        }
         if let Ok(code) = node.pairing_code().await {
             println!();
             ui::dim("Pairing code:");
@@ -597,26 +643,148 @@ async fn run_agent(
         }
     }
 
-    // Ensure logs dir
     let _ = std::fs::create_dir_all(gpumesh_common::logs_dir());
 
     let node = Arc::new(node);
     let endpoint = node.endpoint()?;
+    let mut tick = tokio::time::interval(Duration::from_secs(45));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
-        match endpoint.accept().await {
-            Ok(conn) => {
-                let node = node.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = node.handle_inbound(conn).await {
-                        error!("session error: {e}");
+        tokio::select! {
+            _ = tick.tick() => {
+                if public {
+                    if let Err(e) = node.publish_public_listing().await {
+                        tracing::warn!("public heartbeat failed: {e}");
                     }
-                });
+                }
             }
-            Err(e) => {
-                error!("accept error: {e}");
-                tokio::time::sleep(Duration::from_millis(200)).await;
+            accepted = endpoint.accept() => {
+                match accepted {
+                    Ok(conn) => {
+                        let node = node.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = node.handle_inbound(conn).await {
+                                error!("session error: {e}");
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("accept error: {e}");
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                    }
+                }
             }
         }
+    }
+}
+
+async fn search_public(
+    gpu: Option<String>,
+    vram: Option<String>,
+    cuda: Option<String>,
+    region: Option<String>,
+    idle: bool,
+    json_out: bool,
+) -> Result<()> {
+    ui::print_banner();
+    let cfg = StateStore::load_config().unwrap_or_default();
+    let base = cfg
+        .rendezvous_url
+        .clone()
+        .context("set rendezvous_url first: gpumesh config set rendezvous_url http://…")?;
+    let min_vram_mb = match vram.as_deref() {
+        Some(v) => Some(gpumesh_common::parse_size_to_mb(v)?),
+        None => None,
+    };
+    let q = gpumesh_network::PublicSearchQuery {
+        gpu,
+        min_vram_mb,
+        cuda,
+        region,
+        available_only: idle,
+    };
+    let client = gpumesh_network::RendezvousClient::new(base);
+    let started = std::time::Instant::now();
+    let mut listings = client.public_search(&q).await?;
+    let rtt = started.elapsed().as_millis() as u32;
+    for l in &mut listings {
+        if l.latency_ms.is_none() {
+            l.latency_ms = Some(rtt);
+        }
+    }
+
+    if json_out {
+        println!("{}", serde_json::to_string_pretty(&listings)?);
+        return Ok(());
+    }
+
+    ui::section("Public GPUs");
+    if listings.is_empty() {
+        ui::dim("No matching public nodes. Providers run: gpumesh share --public");
+        return Ok(());
+    }
+    println!(
+        "  {:<16} {:<22} {:>8} {:>6} {:>6} {:>6} {:<10} {}",
+        "NAME", "GPU", "VRAM", "FREE", "PERF", "UP", "REGION", "STATUS"
+    );
+    for l in &listings {
+        let gpu = l.gpu_model.as_deref().unwrap_or("-");
+        let gpu_short = if gpu.len() > 22 {
+            format!("{}…", &gpu[..21])
+        } else {
+            gpu.to_string()
+        };
+        let vram = l
+            .vram_mb
+            .map(|m| format!("{}G", (m as f64 / 1024.0).round()))
+            .unwrap_or_else(|| "-".into());
+        let free = l
+            .vram_free_mb
+            .map(|m| format!("{}G", (m as f64 / 1024.0).round()))
+            .unwrap_or_else(|| "-".into());
+        let perf = l
+            .perf_score
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "-".into());
+        let up = l
+            .uptime_secs
+            .map(|s| {
+                if s >= 3600 {
+                    format!("{}h", s / 3600)
+                } else if s >= 60 {
+                    format!("{}m", s / 60)
+                } else {
+                    format!("{s}s")
+                }
+            })
+            .unwrap_or_else(|| "-".into());
+        let region = l.region.as_deref().unwrap_or("-");
+        println!(
+            "  {:<16} {:<22} {:>8} {:>6} {:>6} {:>6} {:<10} {}",
+            truncate(&l.node_name, 16),
+            gpu_short,
+            vram,
+            free,
+            perf,
+            up,
+            truncate(region, 10),
+            l.availability
+        );
+        ui::dim(format!(
+            "    id={}  pair via: gpumesh pair <their-code>",
+            &l.node_id[..l.node_id.len().min(16)]
+        ));
+    }
+    ui::dim("Public search is metadata only — pairing is still required to run jobs.");
+    Ok(())
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let t: String = s.chars().take(max.saturating_sub(1)).collect();
+        format!("{t}…")
     }
 }
 

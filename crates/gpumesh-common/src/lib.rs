@@ -120,6 +120,10 @@ pub struct NodeConfig {
     pub max_ram_mb: Option<u64>,
     pub max_disk_mb: Option<u64>,
     pub sharing_enabled: bool,
+    /// Publish GPU metadata to the public registry (Phase 7). Does not open allowlist.
+    pub public_listing: bool,
+    /// Optional region label for public search (e.g. us-west, eu, in).
+    pub region: Option<String>,
     /// Default job retries for remote runs (Phase 4).
     pub default_retries: u32,
     /// Update check URL (JSON with `version` + `url` fields).
@@ -145,6 +149,8 @@ impl Default for NodeConfig {
             max_ram_mb: None,
             max_disk_mb: None,
             sharing_enabled: false,
+            public_listing: false,
+            region: None,
             default_retries: 0,
             update_url: Some(
                 "https://raw.githubusercontent.com/gpumesh/gpumesh/main/dist/latest.json"

@@ -20,6 +20,7 @@ enum Item {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
     Share,
+    SharePublic,
     PairCode,
     Pair,
     Peers,
@@ -34,6 +35,7 @@ enum Action {
     GroupAdd,
     GroupMembers,
     RunGroup,
+    Search,
     Jobs,
     Sync,
     Dashboard,
@@ -46,6 +48,7 @@ enum Action {
 const MENU: &[Item] = &[
     Item::Header("Core"),
     Item::Action(Action::Share),
+    Item::Action(Action::SharePublic),
     Item::Action(Action::PairCode),
     Item::Action(Action::Pair),
     Item::Action(Action::Peers),
@@ -62,6 +65,7 @@ const MENU: &[Item] = &[
     Item::Action(Action::RunGroup),
     Item::Header("Tools"),
     Item::Action(Action::Doctor),
+    Item::Action(Action::Search),
     Item::Action(Action::Jobs),
     Item::Action(Action::Sync),
     Item::Action(Action::Dashboard),
@@ -97,7 +101,8 @@ fn theme() -> ColorfulTheme {
 
 fn label(action: Action) -> &'static str {
     match action {
-        Action::Share => "Share GPU (start provider)",
+        Action::Share => "Share GPU (private)",
+        Action::SharePublic => "Share GPU (public listing)",
         Action::PairCode => "Show pairing code",
         Action::Pair => "Pair with a peer",
         Action::Peers => "List peers",
@@ -112,6 +117,7 @@ fn label(action: Action) -> &'static str {
         Action::GroupAdd => "Add peer to group",
         Action::GroupMembers => "List group members",
         Action::RunGroup => "Run job on group (scheduler)",
+        Action::Search => "Search public GPUs",
         Action::Jobs => "Recent jobs",
         Action::Sync => "Sync to dashboard API",
         Action::Dashboard => "Dashboard URLs",
@@ -229,10 +235,28 @@ pub async fn run() -> Result<()> {
 async fn dispatch_action(action: Action) -> Result<()> {
     match action {
         Action::Share => {
-            ui::info("Starting share (Ctrl+C to stop and return)…");
+            ui::info("Starting share (Ctrl+C to stop)…");
             commands::dispatch(Commands::Share {
                 max_vram: None,
                 max_gpu_utilization: None,
+                public: false,
+                region: None,
+                action: None,
+            })
+            .await
+        }
+        Action::SharePublic => {
+            let region = prompt_string_default("Region (e.g. us-west, or empty)", "")?;
+            ui::info("Starting public share (Ctrl+C to stop)…");
+            commands::dispatch(Commands::Share {
+                max_vram: None,
+                max_gpu_utilization: None,
+                public: true,
+                region: if region.is_empty() {
+                    None
+                } else {
+                    Some(region)
+                },
                 action: None,
             })
             .await
@@ -326,6 +350,18 @@ async fn dispatch_action(action: Action) -> Result<()> {
             .await
         }
         Action::Jobs => commands::dispatch(Commands::Jobs { limit: 20 }).await,
+        Action::Search => {
+            let gpu = prompt_string_default("GPU filter (e.g. 4090, empty=all)", "")?;
+            commands::dispatch(Commands::Search {
+                gpu: if gpu.is_empty() { None } else { Some(gpu) },
+                vram: None,
+                cuda: None,
+                region: None,
+                idle: false,
+                json: false,
+            })
+            .await
+        }
         Action::Sync => commands::dispatch(Commands::Sync).await,
         Action::Dashboard => commands::dispatch(Commands::Dashboard).await,
         Action::ConfigShow => {

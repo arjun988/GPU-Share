@@ -2,7 +2,7 @@
 
 **Turn idle GPUs into a personal compute network.**
 
-Phases **0–6** implemented: P2P GPU sharing, DX, private clusters, and local dashboard.
+Phases **0–7** implemented: P2P GPU sharing, DX, private clusters, local dashboard, and public GPU registry.
 
 ## Install
 
@@ -119,6 +119,24 @@ The scheduler probes group members, skips busy / low-VRAM peers, and picks the b
 
 Same Wi‑Fi / LAN works with the addresses inside pairing codes. Across the internet you need reachable IPs, port forwarding for the listen port (default `47000` UDP), or `GPUMESH_RELAY`.
 
+## Public GPU network (Phase 7)
+
+Publish **metadata only** — does not open your GPU to strangers.
+
+```bash
+# Both sides need a control plane URL
+gpumesh config set rendezvous_url http://<control-plane>:8080
+
+# Provider
+gpumesh share --public --region us-west
+
+# Consumer
+gpumesh search --gpu 4090
+gpumesh search --gpu 5060 --vram 8GB --idle
+```
+
+Then pair out-of-band (`gpumesh pair <code>`) before `run`. See [docs/phase7.md](./docs/phase7.md).
+
 ## Dashboard (optional, local)
 
 Metadata only — does not run jobs.
@@ -142,7 +160,7 @@ Open http://127.0.0.1:3000 (or the port Next prints).
 
 | Area | Commands |
 | --- | --- |
-| Core | `start` `init` `status` `gpu` `doctor` `share` `pair-code` `pair` `peers` `run` |
+| Core | `start` `init` `status` `gpu` `doctor` `share` `pair-code` `pair` `peers` `run` `search` |
 | Clusters | `group create\|list\|invite\|join\|add\|members` |
 | DX | `jobs` `logs` `config` `update` `completion` |
 | Cloud | `sync` `dashboard` |
@@ -156,4 +174,4 @@ dashboard/   Next.js + Tailwind UI
 docs/
 ```
 
-Docs: [PRD](./PRD.md) · [Two-machine demo](./docs/two-machine-demo.md) · [Phase 4](./docs/phase4-dx.md) · [Phases 5–6](./docs/phase5-6.md)
+Docs: [PRD](./PRD.md) · [Two-machine demo](./docs/two-machine-demo.md) · [Phase 4](./docs/phase4-dx.md) · [Phases 5–6](./docs/phase5-6.md) · [Phase 7](./docs/phase7.md)

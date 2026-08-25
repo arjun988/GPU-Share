@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{Method, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -23,9 +23,65 @@ struct AppState {
 struct Store {
     peers: HashMap<String, PeerEntry>,
     nodes: HashMap<String, Announce>,
+    public: HashMap<String, PublicEntry>,
     gpus: Vec<GpuInfo>,
     jobs: Vec<JobInfo>,
     groups: Vec<GroupInfo>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct PublicEntry {
+    listing: PublicListing,
+    updated_at: i64,
+}
+
+/// Public GPU registry listing (Phase 7) — metadata only.
+#[derive(Clone, Serialize, Deserialize, Default)]
+struct PublicListing {
+    node_id: String,
+    node_name: String,
+    #[serde(default)]
+    public_key_hex: String,
+    #[serde(default)]
+    addrs: Vec<String>,
+    #[serde(default)]
+    gpu_model: Option<String>,
+    #[serde(default)]
+    vram_mb: Option<u64>,
+    #[serde(default)]
+    vram_free_mb: Option<u64>,
+    #[serde(default)]
+    cuda_version: Option<String>,
+    #[serde(default)]
+    availability: String,
+    #[serde(default)]
+    perf_score: Option<u32>,
+    #[serde(default)]
+    latency_ms: Option<u32>,
+    #[serde(default)]
+    region: Option<String>,
+    #[serde(default)]
+    uptime_secs: Option<u64>,
+    #[serde(default)]
+    sharing: bool,
+    #[serde(default)]
+    public: bool,
+    #[serde(default)]
+    utilization: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct UnannounceBody {
+    node_id: String,
+}
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    gpu: Option<String>,
+    min_vram_mb: Option<u64>,
+    cuda: Option<String>,
+    region: Option<String>,
+    available: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -164,6 +220,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/network", get(network))
         .route("/v1/usage", get(usage))
         .route("/v1/settings", get(settings))
+        .route("/v1/public/announce", post(public_announce))
+        .route("/v1/public/unannounce", post(public_unannounce))
+        .route("/v1/public/search", get(public_search))
+        .route("/v1/public/nodes/{id}", get(public_get))
         .layer(cors)
         .with_state(state);
 
@@ -340,8 +400,145 @@ async fn usage(State(state): State<AppState>) -> Json<serde_json::Value> {
 async fn settings() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "product": "GPUMesh Cloud",
-        "phase": "6",
+        "phase": "7",
         "api_version": "v1",
-        "security": "Ed25519 peer identity; workloads stay on provider nodes",
+        "security": "Ed25519 peer identity; public listing is metadata only; workloads stay allowlisted",
+        "public_registry": true,
     }))
+}
+
+const PUBLIC_TTL_SECS: i64 = 180;
+
+async fn public_announce(
+    State(state): State<AppState>,
+    Json(mut listing): Json<PublicListing>,
+) -> StatusCode {
+    if listing.node_id.is_empty() {
+        return StatusCode::BAD_REQUEST;
+    }
+    listing.public = true;
+    if listing.availability.is_empty() {
+        listing.availability = if listing.sharing {
+            "idle".into()
+        } else {
+            "offline".into()
+        };
+    }
+    let mut s = state.inner.write().await;
+    s.public.insert(
+        listing.node_id.clone(),
+        PublicEntry {
+            listing,
+            updated_at: Utc::now().timestamp(),
+        },
+    );
+    StatusCode::NO_CONTENT
+}
+
+async fn public_unannounce(
+    State(state): State<AppState>,
+    Json(body): Json<UnannounceBody>,
+) -> StatusCode {
+    if body.node_id.is_empty() {
+        return StatusCode::BAD_REQUEST;
+    }
+    state.inner.write().await.public.remove(&body.node_id);
+    StatusCode::NO_CONTENT
+}
+
+async fn public_search(
+    State(state): State<AppState>,
+    Query(q): Query<SearchQuery>,
+) -> Json<Vec<PublicListing>> {
+    let s = state.inner.read().await;
+    let now = Utc::now().timestamp();
+    let gpu = q.gpu.as_deref().map(|g| g.to_ascii_lowercase());
+    let cuda = q.cuda.as_deref().map(|c| c.to_ascii_lowercase());
+    let region = q.region.as_deref().map(|r| r.to_ascii_lowercase());
+    let available_only = matches!(
+        q.available.as_deref(),
+        Some("1") | Some("true") | Some("yes") | Some("idle")
+    );
+    let mut out: Vec<PublicListing> = s
+        .public
+        .values()
+        .filter(|e| now - e.updated_at < PUBLIC_TTL_SECS)
+        .filter(|e| e.listing.public && e.listing.sharing)
+        .filter(|e| {
+            if let Some(ref g) = gpu {
+                e.listing
+                    .gpu_model
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .contains(g)
+            } else {
+                true
+            }
+        })
+        .filter(|e| {
+            if let Some(min) = q.min_vram_mb {
+                e.listing.vram_mb.unwrap_or(0) >= min
+                    || e.listing.vram_free_mb.unwrap_or(0) >= min
+            } else {
+                true
+            }
+        })
+        .filter(|e| {
+            if let Some(ref c) = cuda {
+                e.listing
+                    .cuda_version
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .contains(c)
+            } else {
+                true
+            }
+        })
+        .filter(|e| {
+            if let Some(ref r) = region {
+                e.listing
+                    .region
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .contains(r)
+            } else {
+                true
+            }
+        })
+        .filter(|e| {
+            if available_only {
+                e.listing.availability.eq_ignore_ascii_case("idle")
+            } else {
+                true
+            }
+        })
+        .map(|e| e.listing.clone())
+        .collect();
+    out.sort_by(|a, b| {
+        b.perf_score
+            .unwrap_or(0)
+            .cmp(&a.perf_score.unwrap_or(0))
+            .then_with(|| {
+                b.vram_free_mb
+                    .unwrap_or(0)
+                    .cmp(&a.vram_free_mb.unwrap_or(0))
+            })
+    });
+    Json(out)
+}
+
+async fn public_get(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<PublicListing>, StatusCode> {
+    let s = state.inner.read().await;
+    let now = Utc::now().timestamp();
+    s.public
+        .get(&id)
+        .filter(|e| now - e.updated_at < PUBLIC_TTL_SECS)
+        .map(|e| Json(e.listing.clone()))
+        .ok_or(StatusCode::NOT_FOUND)
 }

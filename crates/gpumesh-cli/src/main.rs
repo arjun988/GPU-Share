@@ -53,8 +53,35 @@ pub(crate) enum Commands {
         max_vram: Option<String>,
         #[arg(long)]
         max_gpu_utilization: Option<u8>,
+        /// Publish GPU metadata to the public registry (Phase 7). Does not open allowlist.
+        #[arg(long)]
+        public: bool,
+        /// Region label for public search (e.g. us-west)
+        #[arg(long, env = "GPUMESH_REGION")]
+        region: Option<String>,
         #[command(subcommand)]
         action: Option<ShareAction>,
+    },
+    /// Search the public GPU registry (Phase 7)
+    Search {
+        /// Substring match on GPU model (e.g. 4090, 5060, A100)
+        #[arg(long)]
+        gpu: Option<String>,
+        /// Minimum VRAM (e.g. 8GB or 8192)
+        #[arg(long)]
+        vram: Option<String>,
+        /// CUDA version substring
+        #[arg(long)]
+        cuda: Option<String>,
+        /// Region substring
+        #[arg(long, env = "GPUMESH_REGION")]
+        region: Option<String>,
+        /// Only idle / available nodes
+        #[arg(long)]
+        idle: bool,
+        /// JSON output
+        #[arg(long)]
+        json: bool,
     },
     /// Print a pairing code for others to `gpumesh pair`
     PairCode,
@@ -154,6 +181,10 @@ pub(crate) enum Commands {
         max_vram: Option<String>,
         #[arg(long)]
         max_gpu_utilization: Option<u8>,
+        #[arg(long)]
+        public: bool,
+        #[arg(long, env = "GPUMESH_REGION")]
+        region: Option<String>,
     },
 }
 

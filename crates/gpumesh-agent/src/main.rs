@@ -22,6 +22,13 @@ struct Args {
     /// Max GPU utilization percent.
     #[arg(long)]
     max_gpu_utilization: Option<u8>,
+
+    /// Publish to public GPU registry (Phase 7).
+    #[arg(long)]
+    public: bool,
+
+    #[arg(long, env = "GPUMESH_REGION")]
+    region: Option<String>,
 }
 
 #[tokio::main]
@@ -38,11 +45,17 @@ async fn main() -> anyhow::Result<()> {
     node.start_network().await?;
 
     if args.share {
-        node.enable_share(args.max_vram, args.max_gpu_utilization)
-            .await?;
+        node.enable_share(
+            args.max_vram,
+            args.max_gpu_utilization,
+            args.public,
+            args.region.clone(),
+        )
+        .await?;
         print_share_banner(&node).await;
     }
 
+    let public = args.public;
     let node = Arc::new(node);
     let endpoint = node.endpoint()?;
     info!(
@@ -50,19 +63,32 @@ async fn main() -> anyhow::Result<()> {
         endpoint.listen_addr, node.identity.node_id
     );
 
+    let mut tick = tokio::time::interval(std::time::Duration::from_secs(45));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
-        match endpoint.accept().await {
-            Ok(conn) => {
-                let node = node.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = node.handle_inbound(conn).await {
-                        error!("session error: {e}");
+        tokio::select! {
+            _ = tick.tick() => {
+                if public {
+                    if let Err(e) = node.publish_public_listing().await {
+                        tracing::warn!("public heartbeat failed: {e}");
                     }
-                });
+                }
             }
-            Err(e) => {
-                error!("accept error: {e}");
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            accepted = endpoint.accept() => {
+                match accepted {
+                    Ok(conn) => {
+                        let node = node.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = node.handle_inbound(conn).await {
+                                error!("session error: {e}");
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("accept error: {e}");
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    }
+                }
             }
         }
     }

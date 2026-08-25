@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,6 +25,30 @@ type Announce struct {
 	VRAMMB       *uint64  `json:"vram_mb"`
 	VRAMFreeMB   *uint64  `json:"vram_free_mb"`
 	Utilization  *uint32  `json:"utilization"`
+}
+
+// PublicListing is Phase 7 registry metadata (never grants job access).
+type PublicListing struct {
+	NodeID       string   `json:"node_id"`
+	NodeName     string   `json:"node_name"`
+	PublicKeyHex string   `json:"public_key_hex"`
+	Addrs        []string `json:"addrs"`
+	GPUModel     *string  `json:"gpu_model"`
+	VRAMMB       *uint64  `json:"vram_mb"`
+	VRAMFreeMB   *uint64  `json:"vram_free_mb"`
+	CUDAVersion  *string  `json:"cuda_version"`
+	Availability string   `json:"availability"`
+	PerfScore    *uint32  `json:"perf_score"`
+	LatencyMS    *uint32  `json:"latency_ms"`
+	Region       *string  `json:"region"`
+	UptimeSecs   *uint64  `json:"uptime_secs"`
+	Sharing      bool     `json:"sharing"`
+	Public       bool     `json:"public"`
+	Utilization  *uint32  `json:"utilization"`
+}
+
+type UnannounceBody struct {
+	NodeID string `json:"node_id"`
 }
 
 type Peer struct {
@@ -90,6 +117,7 @@ type store struct {
 	jobs    []JobInfo
 	groups  []GroupInfo
 	nodes   map[string]Announce
+	public  map[string]publicEntry
 }
 
 type peerEntry struct {
@@ -97,10 +125,16 @@ type peerEntry struct {
 	UpdatedAt time.Time
 }
 
+type publicEntry struct {
+	Listing   PublicListing
+	UpdatedAt time.Time
+}
+
 func main() {
 	s := &store{
-		peers: make(map[string]peerEntry),
-		nodes: make(map[string]Announce),
+		peers:  make(map[string]peerEntry),
+		nodes:  make(map[string]Announce),
+		public: make(map[string]publicEntry),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -138,6 +172,10 @@ func main() {
 	mux.HandleFunc("/v1/network", withCORS(s.handleNetwork))
 	mux.HandleFunc("/v1/usage", withCORS(s.handleUsage))
 	mux.HandleFunc("/v1/settings", withCORS(s.handleSettings))
+	mux.HandleFunc("/v1/public/announce", withCORS(s.handlePublicAnnounce))
+	mux.HandleFunc("/v1/public/unannounce", withCORS(s.handlePublicUnannounce))
+	mux.HandleFunc("/v1/public/search", withCORS(s.handlePublicSearch))
+	mux.HandleFunc("/v1/public/nodes/", withCORS(s.handlePublicNode))
 
 	addr := ":8080"
 	if v := os.Getenv("GPUMESH_API_ADDR"); v != "" {
@@ -364,11 +402,177 @@ func (s *store) handleUsage(w http.ResponseWriter, _ *http.Request) {
 
 func (s *store) handleSettings(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]any{
-		"product":     "GPUMesh Cloud",
-		"phase":       "6",
-		"api_version": "v1",
-		"security":    "Ed25519 peer identity; workloads stay on provider nodes",
+		"product":         "GPUMesh Cloud",
+		"phase":           "7",
+		"api_version":     "v1",
+		"security":        "Ed25519 peer identity; public listing is metadata only; workloads stay allowlisted",
+		"public_registry": true,
 	})
+}
+
+const publicTTL = 3 * time.Minute
+
+func (s *store) handlePublicAnnounce(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var listing PublicListing
+	if err := json.NewDecoder(r.Body).Decode(&listing); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if listing.NodeID == "" {
+		http.Error(w, "node_id required", http.StatusBadRequest)
+		return
+	}
+	listing.Public = true
+	if listing.Availability == "" {
+		if listing.Sharing {
+			listing.Availability = "idle"
+		} else {
+			listing.Availability = "offline"
+		}
+	}
+	s.mu.Lock()
+	s.public[listing.NodeID] = publicEntry{Listing: listing, UpdatedAt: time.Now()}
+	s.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *store) handlePublicUnannounce(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body UnannounceBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.NodeID == "" {
+		http.Error(w, "node_id required", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	delete(s.public, body.NodeID)
+	s.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *store) handlePublicSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query()
+	gpu := strings.ToLower(q.Get("gpu"))
+	cuda := strings.ToLower(q.Get("cuda"))
+	region := strings.ToLower(q.Get("region"))
+	avail := q.Get("available")
+	availableOnly := avail == "1" || avail == "true" || avail == "yes" || avail == "idle"
+	var minVRAM uint64
+	if v := q.Get("min_vram_mb"); v != "" {
+		fmt.Sscanf(v, "%d", &minVRAM)
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	now := time.Now()
+	out := make([]PublicListing, 0)
+	for _, e := range s.public {
+		if now.Sub(e.UpdatedAt) > publicTTL {
+			continue
+		}
+		l := e.Listing
+		if !l.Public || !l.Sharing {
+			continue
+		}
+		if gpu != "" {
+			model := ""
+			if l.GPUModel != nil {
+				model = strings.ToLower(*l.GPUModel)
+			}
+			if !strings.Contains(model, gpu) {
+				continue
+			}
+		}
+		if minVRAM > 0 {
+			ok := false
+			if l.VRAMMB != nil && *l.VRAMMB >= minVRAM {
+				ok = true
+			}
+			if l.VRAMFreeMB != nil && *l.VRAMFreeMB >= minVRAM {
+				ok = true
+			}
+			if !ok {
+				continue
+			}
+		}
+		if cuda != "" {
+			cv := ""
+			if l.CUDAVersion != nil {
+				cv = strings.ToLower(*l.CUDAVersion)
+			}
+			if !strings.Contains(cv, cuda) {
+				continue
+			}
+		}
+		if region != "" {
+			rg := ""
+			if l.Region != nil {
+				rg = strings.ToLower(*l.Region)
+			}
+			if !strings.Contains(rg, region) {
+				continue
+			}
+		}
+		if availableOnly && !strings.EqualFold(l.Availability, "idle") {
+			continue
+		}
+		out = append(out, l)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		si, sj := uint32(0), uint32(0)
+		if out[i].PerfScore != nil {
+			si = *out[i].PerfScore
+		}
+		if out[j].PerfScore != nil {
+			sj = *out[j].PerfScore
+		}
+		if si != sj {
+			return si > sj
+		}
+		fi, fj := uint64(0), uint64(0)
+		if out[i].VRAMFreeMB != nil {
+			fi = *out[i].VRAMFreeMB
+		}
+		if out[j].VRAMFreeMB != nil {
+			fj = *out[j].VRAMFreeMB
+		}
+		return fi > fj
+	})
+	writeJSON(w, out)
+}
+
+func (s *store) handlePublicNode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/v1/public/nodes/")
+	if id == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e, ok := s.public[id]
+	if !ok || time.Since(e.UpdatedAt) > publicTTL {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, e.Listing)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

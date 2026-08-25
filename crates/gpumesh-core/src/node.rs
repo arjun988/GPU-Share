@@ -6,7 +6,10 @@ use gpumesh_common::{
     PROTOCOL_MINOR,
 };
 use gpumesh_gpu::{GpuInfo, GpuMonitor};
-use gpumesh_network::{dial_with_fallback, LanDiscovery, NetworkEndpoint, PeerConnection, RendezvousClient};
+use gpumesh_network::{
+    availability_label, compute_perf_score, dial_with_fallback, LanDiscovery, NetworkEndpoint,
+    PeerConnection, PublicListing, RendezvousAnnounce, RendezvousClient,
+};
 use gpumesh_protocol::{Message, PeerInfoMsg, ProtocolHello};
 use gpumesh_runtime::DockerRuntime;
 use gpumesh_security::{AllowList, NodeIdentity, PairingPayload};
@@ -25,6 +28,8 @@ pub struct MeshNode {
     pub endpoint: Option<Arc<NetworkEndpoint>>,
     pub lan: Option<LanDiscovery>,
     pub sharing: Arc<RwLock<bool>>,
+    /// Unix timestamp when sharing started (for public uptime).
+    pub sharing_since: Arc<RwLock<Option<i64>>>,
 }
 
 impl MeshNode {
@@ -46,6 +51,7 @@ impl MeshNode {
             endpoint: None,
             lan: None,
             sharing: Arc::new(RwLock::new(false)),
+            sharing_since: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -89,6 +95,8 @@ impl MeshNode {
         &self,
         max_vram: Option<String>,
         max_util: Option<u8>,
+        public: bool,
+        region: Option<String>,
     ) -> Result<()> {
         let mut cfg = self.config.write().await;
         if let Some(v) = max_vram {
@@ -97,13 +105,19 @@ impl MeshNode {
         if let Some(u) = max_util {
             cfg.max_gpu_utilization = Some(u);
         }
+        if let Some(r) = region {
+            cfg.region = if r.is_empty() { None } else { Some(r) };
+        }
         cfg.sharing_enabled = true;
+        cfg.public_listing = public;
         StateStore::save_config(&cfg)?;
         *self.sharing.write().await = true;
+        *self.sharing_since.write().await = Some(Utc::now().timestamp());
 
         if let Some(url) = &cfg.rendezvous_url {
             let gpus = GpuMonitor::detect().unwrap_or_default();
-            let ann = gpumesh_network::RendezvousAnnounce {
+            let g = gpus.first();
+            let ann = RendezvousAnnounce {
                 node_id: self.identity.node_id.clone(),
                 node_name: cfg.node_name.clone(),
                 public_key_hex: self.identity.public_key_hex(),
@@ -113,24 +127,97 @@ impl MeshNode {
                     .map(|e| e.local_addrs())
                     .unwrap_or_default(),
                 sharing: true,
-                gpu_model: gpus.first().map(|g| g.name.clone()),
-                vram_mb: gpus.first().map(|g| g.vram_total_mb),
+                gpu_model: g.map(|g| g.name.clone()),
+                vram_mb: g.map(|g| g.vram_total_mb),
+                vram_free_mb: g.map(|g| g.vram_free_mb),
+                utilization: g.and_then(|g| g.utilization_gpu.map(|u| u as u32)),
             };
             let client = RendezvousClient::new(url);
             if let Err(e) = client.announce(&ann).await {
                 warn!("rendezvous announce failed: {e}");
             }
+            if public {
+                let listing = self.build_public_listing_inner(&cfg, g).await;
+                if let Err(e) = client.public_announce(&listing).await {
+                    warn!("public announce failed: {e}");
+                }
+            }
+        } else if public {
+            warn!("--public requires rendezvous_url (gpumesh config set rendezvous_url …)");
         }
-        info!("sharing enabled");
+        info!("sharing enabled (public={public})");
         Ok(())
     }
 
     pub async fn disable_share(&self) -> Result<()> {
         let mut cfg = self.config.write().await;
+        let was_public = cfg.public_listing;
+        let url = cfg.rendezvous_url.clone();
         cfg.sharing_enabled = false;
+        cfg.public_listing = false;
         StateStore::save_config(&cfg)?;
         *self.sharing.write().await = false;
+        *self.sharing_since.write().await = None;
+
+        if was_public {
+            if let Some(url) = url {
+                let client = RendezvousClient::new(url);
+                if let Err(e) = client.public_unannounce(&self.identity.node_id).await {
+                    warn!("public unannounce failed: {e}");
+                }
+            }
+        }
         Ok(())
+    }
+
+    pub async fn publish_public_listing(&self) -> Result<()> {
+        let cfg = self.config.read().await.clone();
+        if !cfg.public_listing {
+            return Ok(());
+        }
+        let Some(url) = cfg.rendezvous_url.clone() else {
+            return Ok(());
+        };
+        let gpus = GpuMonitor::detect().unwrap_or_default();
+        let listing = self.build_public_listing_inner(&cfg, gpus.first()).await;
+        RendezvousClient::new(url)
+            .public_announce(&listing)
+            .await
+    }
+
+    async fn build_public_listing_inner(
+        &self,
+        cfg: &NodeConfig,
+        g: Option<&GpuInfo>,
+    ) -> PublicListing {
+        let sharing = *self.sharing.read().await;
+        let util = g.and_then(|g| g.utilization_gpu.map(|u| u as u32));
+        let vram_total = g.map(|g| g.vram_total_mb).unwrap_or(0);
+        let vram_free = g.map(|g| g.vram_free_mb).unwrap_or(0);
+        let since = *self.sharing_since.read().await;
+        let uptime = since.map(|t| (Utc::now().timestamp() - t).max(0) as u64);
+        PublicListing {
+            node_id: self.identity.node_id.clone(),
+            node_name: cfg.node_name.clone(),
+            public_key_hex: self.identity.public_key_hex(),
+            addrs: self
+                .endpoint
+                .as_ref()
+                .map(|e| e.local_addrs())
+                .unwrap_or_default(),
+            gpu_model: g.map(|g| g.name.clone()),
+            vram_mb: g.map(|g| g.vram_total_mb),
+            vram_free_mb: g.map(|g| g.vram_free_mb),
+            cuda_version: g.and_then(|g| g.cuda_version.clone()),
+            availability: availability_label(sharing, util).to_string(),
+            perf_score: Some(compute_perf_score(vram_total, vram_free, util)),
+            latency_ms: None,
+            region: cfg.region.clone(),
+            uptime_secs: uptime,
+            sharing,
+            public: true,
+            utilization: util,
+        }
     }
 
     pub async fn pairing_code(&self) -> Result<String> {

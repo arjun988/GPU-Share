@@ -93,6 +93,8 @@ Examples:
   gpumesh start
   gpumesh init --name my-pc
   gpumesh share
+  gpumesh share --public --region us-west
+  gpumesh search --gpu 4090
   gpumesh pair <code>
   gpumesh group create research
   gpumesh run --group research --gpu-memory 20GB python train.py
