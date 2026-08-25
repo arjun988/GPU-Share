@@ -71,6 +71,7 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
             Ok(())
         }
         Commands::Doctor => crate::doctor::run().await,
+        Commands::Start => unreachable!("Start is handled in main"),
         Commands::Share {
             max_vram,
             max_gpu_utilization,

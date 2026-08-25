@@ -17,6 +17,8 @@ On each laptop you need: Docker, an NVIDIA GPU + [NVIDIA Container Toolkit](http
 ## Quick start (single machine)
 
 ```bash
+gpumesh start                 # interactive menu (arrow keys)
+# or:
 gpumesh init --name alice-pc
 gpumesh doctor
 gpumesh share
@@ -140,7 +142,7 @@ Open http://127.0.0.1:3000 (or the port Next prints).
 
 | Area | Commands |
 | --- | --- |
-| Core | `init` `status` `gpu` `doctor` `share` `pair-code` `pair` `peers` `run` |
+| Core | `start` `init` `status` `gpu` `doctor` `share` `pair-code` `pair` `peers` `run` |
 | Clusters | `group create\|list\|invite\|join\|add\|members` |
 | DX | `jobs` `logs` `config` `update` `completion` |
 | Cloud | `sync` `dashboard` |

@@ -1,0 +1,57 @@
+Script started on 2026-08-25 16:23:26+00:00 [COMMAND="/mnt/c/Users/Arjun/Desktop/GPU-Share/target/debug/gpumesh" <not executed on terminal>]
+033GPUMesh — turn idle GPUs into a personal compute network
+
+[1m[96mUsage:[0m [1m[92mgpumesh[0m [90m<COMMAND>[0m
+
+[1m[96mCommands:[0m
+  [1m[92minit[0m        Create local identity and config
+  [1m[92mstatus[0m      Show node, GPU, and network status
+  [1m[92mgpu[0m         Show detailed GPU inventory
+  [1m[92mdoctor[0m      Diagnose local setup (Docker, NVIDIA, identity, network)
+  [1m[92mstart[0m       Interactive Claude-style menu (arrow keys)
+  [1m[92mshare[0m       Share this node's GPU (starts accept loop)
+  [1m[92mpair-code[0m   Print a pairing code for others to `gpumesh pair`
+  [1m[92mpair[0m        Pair with a peer using their pairing code
+  [1m[92mpeers[0m       List paired peers
+  [1m[92mconnect[0m     Ensure/refresh a connection to a peer
+  [1m[92mallow[0m       Allow a paired peer to run jobs
+  [1m[92mdeny[0m        Deny a peer
+  [1m[92mgroup[0m       Manage private GPU clusters (Phase 5)
+  [1m[92mrun[0m         Run a command locally or on a peer GPU
+  [1m[92msync[0m        Sync local metadata to the control plane / dashboard API
+  [1m[92mdashboard[0m   Print dashboard URL / how to open GPUMesh Cloud UI
+  [1m[92mjobs[0m        List recent jobs
+  [1m[92mlogs[0m        Show logs for a job or the agent
+  [1m[92mcancel[0m      Cancel a running job on a peer
+  [1m[92mconfig[0m      Get or set configuration
+  [1m[92mupdate[0m      Check for / apply CLI updates
+  [1m[92mcompletion[0m  Generate shell completions
+  [1m[92mcp[0m          Copy files to/from a peer
+  [1m[92mexec[0m        Isolated workload shell on a peer (not host SSH)
+  [1m[92magent[0m       Run the provider agent daemon
+  [1m[92mhelp[0m        Print this message or the help of the given subcommand(s)
+
+[1m[96mOptions:[0m
+  [1m[92m-h[0m, [1m[92m--help[0m     Print help (see more with '--help')
+  [1m[92m-V[0m, [1m[92m--version[0m  Print version
+
+Examples:
+  gpumesh start
+  gpumesh init --name my-pc
+  gpumesh share
+  gpumesh pair <code>
+  gpumesh group create research
+  gpumesh run --group research --gpu-memory 20GB python train.py
+  gpumesh run --file job.yaml
+  gpumesh sync
+  gpumesh doctor
+
+Environment:
+  GPUMESH_HOME     Config directory override
+  GPUMESH_PEER     Default peer for run/cp
+  GPUMESH_IMAGE    Default container image
+  GPUMESH_LOG      tracing filter (e.g. gpumesh=info)
+
+Docs: https://github.com/gpumesh/gpumesh
+
+Script done on 2026-08-25 16:23:26+00:00 [COMMAND_EXIT_CODE="2"]

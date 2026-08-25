@@ -4,6 +4,7 @@ mod commands;
 mod doctor;
 mod group;
 mod jobfile;
+mod start;
 mod ui;
 mod update;
 
@@ -44,6 +45,8 @@ pub(crate) enum Commands {
     Gpu,
     /// Diagnose local setup (Docker, NVIDIA, identity, network)
     Doctor,
+    /// Interactive Claude-style menu (arrow keys)
+    Start,
     /// Share this node's GPU (starts accept loop)
     Share {
         #[arg(long)]
@@ -191,7 +194,11 @@ async fn main() {
         .init();
 
     let cli = Cli::parse();
-    if let Err(e) = commands::dispatch(cli.command).await {
+    let result = match cli.command {
+        Commands::Start => start::run().await,
+        other => commands::dispatch(other).await,
+    };
+    if let Err(e) = result {
         ui::err(e.to_string());
         std::process::exit(1);
     }

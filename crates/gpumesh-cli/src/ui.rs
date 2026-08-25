@@ -90,6 +90,7 @@ pub fn flush() {
 
 pub const AFTER_HELP: &str = "\
 Examples:
+  gpumesh start
   gpumesh init --name my-pc
   gpumesh share
   gpumesh pair <code>
