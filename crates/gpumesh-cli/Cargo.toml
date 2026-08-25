@@ -13,6 +13,7 @@ path = "src/main.rs"
 gpumesh-common.workspace = true
 gpumesh-core.workspace = true
 gpumesh-security.workspace = true
+gpumesh-protocol.workspace = true
 gpumesh-storage.workspace = true
 gpumesh-gpu.workspace = true
 gpumesh-network.workspace = true
