@@ -5,10 +5,10 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use clap::CommandFactory;
-use gpumesh_common::{JobState, PeerStatus};
+use gpumesh_common::{parse_size_to_mb, JobState, PeerStatus};
 use gpumesh_core::{
     collect_status, format_peers_table, format_status, run_local_job, run_remote_job,
-    transfer_file_from_peer, transfer_file_to_peer, MeshNode,
+    schedule_peer, transfer_file_from_peer, transfer_file_to_peer, MeshNode, ScheduleRequest,
 };
 use gpumesh_protocol::Message;
 use gpumesh_security::short_fingerprint;
@@ -170,8 +170,27 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
             ui::ok(format!("Denied {peer}"));
             Ok(())
         }
+        Commands::Group { action } => crate::group::dispatch(action).await,
+        Commands::Sync => sync_to_control_plane().await,
+        Commands::Dashboard => {
+            ui::print_banner();
+            ui::section("GPUMesh Cloud Dashboard");
+            let cfg = StateStore::load_config().unwrap_or_default();
+            let api = cfg
+                .rendezvous_url
+                .unwrap_or_else(|| "http://127.0.0.1:8080".into());
+            ui::kv("API", &api);
+            ui::kv("UI", "http://127.0.0.1:3000");
+            println!();
+            ui::dim("Start control plane:  cd services/control-plane && go run .");
+            ui::dim("Start dashboard:      cd dashboard && npm install && npm run dev");
+            ui::dim("Then:                 gpumesh sync");
+            Ok(())
+        }
         Commands::Run {
             peer,
+            group,
+            gpu_memory,
             image,
             env,
             workdir,
@@ -180,6 +199,8 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
             command,
         } => {
             let mut peer = peer;
+            let mut group = group;
+            let mut gpu_memory = gpu_memory;
             let mut image = image;
             let mut env = env;
             let mut workdir = workdir;
@@ -190,6 +211,12 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
                 let job = JobFile::load(PathBuf::from(&path).as_path())?;
                 if peer.is_none() {
                     peer = job.peer.clone();
+                }
+                if group.is_none() {
+                    group = job.group.clone();
+                }
+                if gpu_memory.is_none() {
+                    gpu_memory = job.gpu_memory.clone();
                 }
                 if image.is_none() {
                     image = job.image.clone();
@@ -222,6 +249,35 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
 
             let mut node = MeshNode::bootstrap().await?;
             let workdir_path = PathBuf::from(&workdir);
+
+            if group.is_some() || gpu_memory.is_some() {
+                node.start_network().await?;
+                let mem_mb = match &gpu_memory {
+                    Some(s) => Some(parse_size_to_mb(s)?),
+                    None => None,
+                };
+                let spinner = ui::spinner("Scheduling peer…");
+                let chosen = schedule_peer(
+                    &node,
+                    ScheduleRequest {
+                        group: group.clone(),
+                        gpu_memory_mb: mem_mb,
+                        prefer_peer: peer.clone(),
+                    },
+                )
+                .await?;
+                spinner.finish_and_clear();
+                ui::ok(format!(
+                    "Scheduled → {} ({})",
+                    chosen.peer_name,
+                    chosen.gpu_model.as_deref().unwrap_or("GPU")
+                ));
+                if let Some(free) = chosen.vram_free_mb {
+                    ui::kv("Free VRAM", format!("{free} MB"));
+                }
+                peer = Some(chosen.peer_name);
+            }
+
             let mut last_err = None;
             let attempts = retries + 1;
             for attempt in 1..=attempts {
@@ -586,4 +642,88 @@ fn split_remote(s: &str) -> Option<(&str, &str)> {
         return None;
     }
     Some((peer, path))
+}
+
+async fn sync_to_control_plane() -> Result<()> {
+    ui::print_banner();
+    let node = MeshNode::bootstrap().await?;
+    let cfg = node.config.read().await.clone();
+    let base = cfg
+        .rendezvous_url
+        .clone()
+        .unwrap_or_else(|| "http://127.0.0.1:8080".into());
+    let gpus = MeshNode::detect_gpus().unwrap_or_default();
+    let peers = {
+        let store = node.peers.read().await;
+        store.list().into_iter().cloned().collect::<Vec<_>>()
+    };
+    let jobs = JobRecord::list().unwrap_or_default();
+    let groups = gpumesh_storage::GroupStore::load()
+        .map(|s| {
+            s.list()
+                .into_iter()
+                .map(|g| {
+                    serde_json::json!({
+                        "id": g.id,
+                        "name": g.name,
+                        "members": g.members.len(),
+                        "owner_node_id": g.owner_node_id,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let payload = serde_json::json!({
+        "node": {
+            "node_id": node.identity.node_id,
+            "node_name": cfg.node_name,
+            "public_key_hex": node.identity.public_key_hex(),
+            "sharing": cfg.sharing_enabled,
+            "addrs": [],
+            "gpu_model": gpus.first().map(|g| g.name.clone()),
+            "vram_mb": gpus.first().map(|g| g.vram_total_mb),
+            "vram_free_mb": gpus.first().map(|g| g.vram_free_mb),
+            "utilization": gpus.first().and_then(|g| g.utilization_gpu),
+        },
+        "gpus": gpus.iter().map(|g| serde_json::json!({
+            "index": g.index,
+            "name": g.name,
+            "vram_total_mb": g.vram_total_mb,
+            "vram_used_mb": g.vram_used_mb,
+            "vram_free_mb": g.vram_free_mb,
+            "utilization": g.utilization_gpu,
+            "temperature_c": g.temperature_c,
+        })).collect::<Vec<_>>(),
+        "peers": peers.iter().map(|p| serde_json::json!({
+            "node_id": p.node_id,
+            "node_name": p.node_name,
+            "gpu_model": p.gpu_model,
+            "vram_mb": p.vram_mb,
+        })).collect::<Vec<_>>(),
+        "jobs": jobs.iter().take(50).map(|j| serde_json::json!({
+            "job_id": j.job_id,
+            "peer": j.peer,
+            "state": j.state.to_string(),
+            "exit_code": j.exit_code,
+            "image": j.image,
+            "created_at": j.created_at.to_rfc3339(),
+        })).collect::<Vec<_>>(),
+        "groups": groups,
+    });
+
+    let url = format!("{}/v1/sync", base.trim_end_matches('/'));
+    let spinner = ui::spinner(&format!("Syncing to {url}…"));
+    let client = reqwest::Client::new();
+    let resp = client.post(&url).json(&payload).send().await;
+    spinner.finish_and_clear();
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            ui::ok("Synced metadata to control plane");
+            ui::dim("Open dashboard at http://127.0.0.1:3000");
+        }
+        Ok(r) => bail!("sync failed: HTTP {}", r.status()),
+        Err(e) => bail!("sync failed: {e} — is the control plane running?"),
+    }
+    Ok(())
 }

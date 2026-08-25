@@ -11,6 +11,7 @@ members = [
     "crates/gpumesh-core",
     "crates/gpumesh-agent",
     "crates/gpumesh-cli",
+    "crates/gpumesh-control",
 ]
 default-members = ["crates/gpumesh-cli", "crates/gpumesh-agent"]
 

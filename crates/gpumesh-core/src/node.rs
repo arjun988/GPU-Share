@@ -63,6 +63,9 @@ impl MeshNode {
     }
 
     pub async fn start_network(&mut self) -> Result<()> {
+        if self.endpoint.is_some() {
+            return Ok(());
+        }
         let cfg = self.config.read().await.clone();
         let endpoint = NetworkEndpoint::bind(self.identity.clone(), cfg.listen_port).await?;
         let lan = LanDiscovery::start(

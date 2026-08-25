@@ -1,0 +1,11 @@
+# Example cluster-scheduled job (Phase 5)
+name: cluster-hello
+group: research
+gpu_memory: 4GB
+image: python:3.12-slim
+workdir: .
+retries: 1
+command:
+  - python
+  - -c
+  - print("scheduled on cluster")

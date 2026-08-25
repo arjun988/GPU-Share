@@ -93,8 +93,10 @@ Examples:
   gpumesh init --name my-pc
   gpumesh share
   gpumesh pair <code>
-  gpumesh run --peer alice --image pytorch/pytorch:latest python train.py
+  gpumesh group create research
+  gpumesh run --group research --gpu-memory 20GB python train.py
   gpumesh run --file job.yaml
+  gpumesh sync
   gpumesh doctor
 
 Environment:

@@ -9,6 +9,8 @@ use serde::Deserialize;
 pub struct JobFile {
     pub name: Option<String>,
     pub peer: Option<String>,
+    pub group: Option<String>,
+    pub gpu_memory: Option<String>,
     pub image: Option<String>,
     #[serde(default = "default_workdir")]
     pub workdir: String,

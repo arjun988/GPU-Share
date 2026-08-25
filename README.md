@@ -2,30 +2,14 @@
 
 **Turn idle GPUs into a personal compute network.**
 
-```bash
-gpumesh init
-gpumesh share
-gpumesh pair <code>
-gpumesh run --peer alice python train.py
-```
-
-Open-source, CLI-first P2P GPU compute for trusted peers. Phases **0–4** implemented.
+Phases **0–6** implemented: P2P GPU sharing, DX, private clusters, and Cloud dashboard.
 
 ## Install
 
 ```bash
-# from this repo
 GPUMESH_FROM_SOURCE=1 ./scripts/install.sh
-
 # or
 cargo install --path crates/gpumesh-cli
-export PATH="$HOME/.cargo/bin:$PATH"
-```
-
-Shell completions:
-
-```bash
-source <(gpumesh completion bash)   # or zsh / fish / powershell
 ```
 
 ## Quick start
@@ -35,48 +19,33 @@ gpumesh init --name alice-pc
 gpumesh doctor
 gpumesh share
 
-# other machine / other GPUMESH_HOME
-gpumesh init --name bob
-gpumesh pair '<code>'
-gpumesh run --peer alice-pc --image python:3.12-slim echo hello
-```
+# Phase 5 — private cluster
+gpumesh group create research
+gpumesh run --group research --gpu-memory 8GB python train.py
 
-YAML jobs:
-
-```bash
-gpumesh run --file examples/job.yaml
+# Phase 6 — dashboard
+gpumesh config set rendezvous_url http://127.0.0.1:8080
+# cd services/control-plane && go run .
+# cd dashboard && npm i && npm run dev
+gpumesh sync
 ```
 
 ## CLI
 
-| Command | Description |
+| Area | Commands |
 | --- | --- |
-| `init` / `status` / `gpu` / `doctor` | Setup & diagnostics |
-| `share` / `pair` / `peers` / `connect` | Private P2P network |
-| `run` / `jobs` / `logs` / `cancel` | Jobs |
-| `cp` / `exec` | Files & isolated shell |
-| `config` / `update` / `completion` | DX (Phase 4) |
-
-Environment: `GPUMESH_HOME`, `GPUMESH_PEER`, `GPUMESH_IMAGE`, `GPUMESH_LOG`.
+| Core | `init` `status` `gpu` `doctor` `share` `pair` `run` |
+| Clusters | `group create\|list\|invite\|join\|add\|members` |
+| DX | `jobs` `logs` `config` `update` `completion` |
+| Cloud | `sync` `dashboard` |
 
 ## Layout
 
 ```text
-crates/gpumesh-cli/     # polished `gpumesh` binary
-crates/gpumesh-agent/   # provider daemon
-crates/gpumesh-*        # core protocol/runtime/network
-services/control-plane/ # optional rendezvous
-scripts/install.sh
+crates/      Rust CLI + agent + protocol
+services/    Go control-plane (dashboard API)
+dashboard/   Next.js + Tailwind UI
 docs/
 ```
 
-## Docs
-
-- [PRD](./PRD.md)
-- [Phase 4 DX](./docs/phase4-dx.md)
-- [Two-machine demo](./docs/two-machine-demo.md)
-- [Completions](./docs/completions.md)
-
-## License
-
-Apache-2.0 recommended (see PRD).
+Docs: [PRD](./PRD.md) · [Phase 4](./docs/phase4-dx.md) · [Phases 5–6](./docs/phase5-6.md)

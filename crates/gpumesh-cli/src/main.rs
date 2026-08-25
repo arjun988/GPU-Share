@@ -2,6 +2,7 @@
 
 mod commands;
 mod doctor;
+mod group;
 mod jobfile;
 mod ui;
 mod update;
@@ -64,10 +65,21 @@ pub(crate) enum Commands {
     Allow { peer: String },
     /// Deny a peer
     Deny { peer: String },
+    /// Manage private GPU clusters (Phase 5)
+    Group {
+        #[command(subcommand)]
+        action: group::GroupCmd,
+    },
     /// Run a command locally or on a peer GPU
     Run {
         #[arg(long, env = "GPUMESH_PEER")]
         peer: Option<String>,
+        /// Schedule within a private group (Phase 5)
+        #[arg(long)]
+        group: Option<String>,
+        /// Minimum GPU memory required (e.g. 20GB) — scheduler picks a peer
+        #[arg(long)]
+        gpu_memory: Option<String>,
         #[arg(long, env = "GPUMESH_IMAGE")]
         image: Option<String>,
         #[arg(long, value_parser = parse_env)]
@@ -83,6 +95,10 @@ pub(crate) enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
     },
+    /// Sync local metadata to the control plane / dashboard API
+    Sync,
+    /// Print dashboard URL / how to open GPUMesh Cloud UI
+    Dashboard,
     /// List recent jobs
     Jobs {
         #[arg(long, default_value_t = 20)]
