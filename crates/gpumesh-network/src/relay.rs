@@ -1,4 +1,4 @@
-//! Simple relay fallback: connect via an intermediate QUIC hop advertised as `relay://host:port`.
+//! QUIC relay fallback advertised as `relay://host:port` or `host:port`.
 //!
 //! For Phase 2/3 the relay is a thin forwarder. If `GPUMESH_RELAY` is unset, dial falls back
 //! only across peer-advertised addresses.
@@ -21,8 +21,40 @@ impl RelayClient {
             .map(|relay_addr| Self { relay_addr })
     }
 
-    /// Dial peer through relay. Protocol: connect to relay, send `RELAY <peer_id>\n`, then
-    /// continue with normal GPUMesh framed messages on the same stream.
+    async fn connect(&self, endpoint: &NetworkEndpoint) -> Result<PeerConnection> {
+        let relay_addr = self
+            .relay_addr
+            .strip_prefix("relay://")
+            .unwrap_or(&self.relay_addr);
+        let socket = tokio::net::lookup_host(relay_addr)
+            .await
+            .map_err(|e| GpuMeshError::Network(format!("cannot resolve relay {relay_addr}: {e}")))?
+            .next()
+            .ok_or_else(|| {
+                GpuMeshError::Network(format!("relay {relay_addr} resolved no addresses"))
+            })?;
+        endpoint.dial(&socket.to_string()).await
+    }
+
+    /// Register this endpoint as the relay target for `node_id`.
+    ///
+    /// The returned connection becomes an inbound peer session after a dialer is matched.
+    pub async fn register(
+        &self,
+        endpoint: &NetworkEndpoint,
+        node_id: &str,
+    ) -> Result<PeerConnection> {
+        info!("registering node {node_id} with relay {}", self.relay_addr);
+        let mut conn = self.connect(endpoint).await?;
+        conn.send(gpumesh_protocol::Message::Error {
+            message: format!("RELAY_REGISTER:{node_id}"),
+        })
+        .await?;
+        conn.connection_mode = ConnectionMode::Relay;
+        Ok(conn)
+    }
+
+    /// Dial a peer through the relay, then continue using normal framed messages.
     pub async fn dial_via(
         &self,
         endpoint: &NetworkEndpoint,
@@ -32,8 +64,7 @@ impl RelayClient {
             "attempting relay {} for peer {peer_node_id}",
             self.relay_addr
         );
-        let mut conn = endpoint.dial(&self.relay_addr).await?;
-        // Application-level signal that this session should be bridged.
+        let mut conn = self.connect(endpoint).await?;
         conn.send(gpumesh_protocol::Message::Error {
             message: format!("RELAY_REQUEST:{peer_node_id}"),
         })

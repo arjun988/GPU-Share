@@ -18,6 +18,6 @@ pub use endpoint::{NetworkEndpoint, NetworkEvent};
 pub use peer_conn::{ConnectionMode, PeerConnection};
 pub use relay::{dial_with_fallback, RelayClient};
 pub use rendezvous::{
-    availability_label, compute_perf_score, PublicListing, PublicSearchQuery, RendezvousAnnounce,
-    RendezvousClient, RendezvousPeer,
+    availability_label, compute_perf_score, PublicListing, PublicSearchQuery, PublicUnannounce,
+    RendezvousAnnounce, RendezvousClient, RendezvousPeer,
 };

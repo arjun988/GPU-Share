@@ -8,11 +8,13 @@ use gpumesh_common::{
 use gpumesh_gpu::{GpuInfo, GpuMonitor};
 use gpumesh_network::{
     availability_label, compute_perf_score, dial_with_fallback, LanDiscovery, NetworkEndpoint,
-    PeerConnection, PublicListing, RendezvousAnnounce, RendezvousClient,
+    PeerConnection, PublicListing, PublicUnannounce, RendezvousAnnounce, RendezvousClient,
 };
 use gpumesh_protocol::{Message, PeerInfoMsg, ProtocolHello};
 use gpumesh_runtime::DockerRuntime;
-use gpumesh_security::{AllowList, NodeIdentity, PairingPayload};
+use gpumesh_security::{
+    sign_hello, sign_public_listing, verify_hello, AllowList, NodeIdentity, PairingPayload,
+};
 use gpumesh_storage::{PeerRecord, PeerStore, StateStore};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -162,7 +164,13 @@ impl MeshNode {
         if was_public {
             if let Some(url) = url {
                 let client = RendezvousClient::new(url);
-                if let Err(e) = client.public_unannounce(&self.identity.node_id).await {
+                let mut body = PublicUnannounce {
+                    node_id: self.identity.node_id.clone(),
+                    issued_at: Utc::now().timestamp(),
+                    signature: String::new(),
+                };
+                body.signature = self.identity.sign_b64(&body.canonical_bytes());
+                if let Err(e) = client.public_unannounce(&body).await {
                     warn!("public unannounce failed: {e}");
                 }
             }
@@ -180,9 +188,7 @@ impl MeshNode {
         };
         let gpus = GpuMonitor::detect().unwrap_or_default();
         let listing = self.build_public_listing_inner(&cfg, gpus.first()).await;
-        RendezvousClient::new(url)
-            .public_announce(&listing)
-            .await
+        RendezvousClient::new(url).public_announce(&listing).await
     }
 
     async fn build_public_listing_inner(
@@ -196,15 +202,11 @@ impl MeshNode {
         let vram_free = g.map(|g| g.vram_free_mb).unwrap_or(0);
         let since = *self.sharing_since.read().await;
         let uptime = since.map(|t| (Utc::now().timestamp() - t).max(0) as u64);
-        PublicListing {
+        let mut listing = PublicListing {
             node_id: self.identity.node_id.clone(),
             node_name: cfg.node_name.clone(),
             public_key_hex: self.identity.public_key_hex(),
-            addrs: self
-                .endpoint
-                .as_ref()
-                .map(|e| e.local_addrs())
-                .unwrap_or_default(),
+            addrs: vec![],
             gpu_model: g.map(|g| g.name.clone()),
             vram_mb: g.map(|g| g.vram_total_mb),
             vram_free_mb: g.map(|g| g.vram_free_mb),
@@ -217,7 +219,11 @@ impl MeshNode {
             sharing,
             public: true,
             utilization: util,
-        }
+            issued_at: 0,
+            signature: String::new(),
+        };
+        sign_public_listing(&self.identity, &mut listing);
+        listing
     }
 
     pub async fn pairing_code(&self) -> Result<String> {
@@ -303,15 +309,37 @@ impl MeshNode {
             .clone();
         drop(store);
         let endpoint = self.endpoint()?;
-        let mut conn = dial_with_fallback(&endpoint, &rec.addrs, &rec.node_id).await?;
+        let mut addrs = rec.addrs.clone();
+        // Merge LAN discovery addrs for this peer if available.
+        if let Some(lan) = &self.lan {
+            for d in lan.peers() {
+                if d.node_id == rec.node_id && !d.addr.is_empty() && !addrs.contains(&d.addr) {
+                    addrs.push(d.addr);
+                }
+            }
+        }
+        let mut conn = dial_with_fallback(&endpoint, &addrs, &rec.node_id).await?;
         let hello = self.make_hello().await;
         let peer_hello = perform_client_handshake(&mut conn, hello).await?;
+        verify_hello(&peer_hello)?;
+        if peer_hello.node_id != rec.node_id {
+            return Err(GpuMeshError::Network(format!(
+                "peer identity mismatch: expected {} got {}",
+                rec.node_id, peer_hello.node_id
+            )));
+        }
+        if !rec.public_key_hex.is_empty() && peer_hello.public_key_hex != rec.public_key_hex {
+            return Err(GpuMeshError::Network(
+                "peer public key does not match paired record".into(),
+            ));
+        }
         conn.peer_node_id = Some(peer_hello.node_id.clone());
         conn.peer_name = Some(peer_hello.node_name.clone());
         if let Some(p) = self.peers.write().await.get_mut(&rec.node_id) {
             p.last_seen = Some(Utc::now().timestamp());
             p.gpu_model = peer_hello.gpu_model.clone();
             p.vram_mb = peer_hello.vram_total_mb;
+            p.public_key_hex = peer_hello.public_key_hex.clone();
         }
         let _ = self.peers.read().await.save();
         Ok(conn)
@@ -331,7 +359,7 @@ impl MeshNode {
         } else {
             PeerStatus::Unknown
         };
-        ProtocolHello {
+        let mut hello = ProtocolHello {
             major: PROTOCOL_MAJOR,
             minor: PROTOCOL_MINOR,
             node_id: self.identity.node_id.clone(),
@@ -342,7 +370,11 @@ impl MeshNode {
             vram_total_mb: gpus.first().map(|g| g.vram_total_mb),
             vram_free_mb: gpus.first().map(|g| g.vram_free_mb),
             status,
-        }
+            issued_at: 0,
+            signature: String::new(),
+        };
+        sign_hello(&self.identity, &mut hello);
+        hello
     }
 
     pub async fn peer_info_msg(&self) -> PeerInfoMsg {
@@ -366,10 +398,19 @@ impl MeshNode {
         }
     }
 
-    pub async fn authorize_inbound(&self, node_id: &str) -> Result<()> {
+    pub async fn authorize_inbound(&self, hello: &ProtocolHello) -> Result<()> {
+        verify_hello(hello)?;
         let allow = self.allowlist.read().await;
-        if !allow.is_allowed(node_id) {
-            return Err(GpuMeshError::NotAuthorized(node_id.into()));
+        if !allow.is_allowed(&hello.node_id) {
+            return Err(GpuMeshError::NotAuthorized(hello.node_id.clone()));
+        }
+        // If we have a stored peer record, public key must match (prevents ID spoof with new key).
+        if let Some(rec) = self.peers.read().await.get(&hello.node_id) {
+            if !rec.public_key_hex.is_empty() && rec.public_key_hex != hello.public_key_hex {
+                return Err(GpuMeshError::NotAuthorized(
+                    "public key does not match paired peer".into(),
+                ));
+            }
         }
         Ok(())
     }
@@ -386,7 +427,7 @@ impl MeshNode {
     pub async fn handle_inbound(&self, mut conn: PeerConnection) -> Result<()> {
         let hello = self.make_hello().await;
         let peer_hello = perform_server_handshake(&mut conn, hello).await?;
-        if let Err(e) = self.authorize_inbound(&peer_hello.node_id).await {
+        if let Err(e) = self.authorize_inbound(&peer_hello).await {
             conn.send(Message::Error {
                 message: format!("denied: {e}"),
             })
@@ -396,6 +437,12 @@ impl MeshNode {
         }
         conn.peer_node_id = Some(peer_hello.node_id.clone());
         conn.peer_name = Some(peer_hello.node_name.clone());
+        // Refresh stored key from verified hello
+        if let Some(p) = self.peers.write().await.get_mut(&peer_hello.node_id) {
+            p.public_key_hex = peer_hello.public_key_hex.clone();
+            p.last_seen = Some(Utc::now().timestamp());
+        }
+        let _ = self.peers.read().await.save();
         crate::remote::serve_peer_session(self, conn).await
     }
 }

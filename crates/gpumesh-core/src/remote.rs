@@ -23,13 +23,15 @@ pub async fn run_remote_job(
     command: Vec<String>,
     workdir: PathBuf,
     env: Vec<(String, String)>,
+    job_id: Option<String>,
+    gpu_memory_mb: Option<u64>,
 ) -> Result<i32> {
     let cfg = node.config.read().await.clone();
     let image = image.unwrap_or(cfg.default_image.clone());
-    let mut conn = node.connect_peer(peer).await?;
+    let conn = node.connect_peer(peer).await?;
 
     // Package & upload workload
-    let job_id = short_job_id();
+    let job_id = job_id.unwrap_or_else(short_job_id);
     let transfer_id = new_transfer_id();
     let pack_path = StateStore::ensure_job_dir(&job_id)?.join("upload.gpk");
     let manifest = package_workdir(&workdir, &pack_path)?;
@@ -55,7 +57,7 @@ pub async fn run_remote_job(
         env,
         workdir: "/workspace".into(),
         transfer_id: Some(transfer_id),
-        gpu_memory_mb: None,
+        gpu_memory_mb,
     };
     conn.send(Message::RunJob(req)).await?;
 
@@ -68,15 +70,25 @@ pub async fn run_remote_job(
             Some(Message::JobRejected { reason }) => {
                 return Err(GpuMeshError::Job(reason));
             }
-            Some(Message::JobLog {
-                stream,
-                line,
-                ..
-            }) => match stream {
-                LogStream::Stderr => eprintln!("{line}"),
-                LogStream::System => eprintln!("[{line}]"),
-                LogStream::Stdout => println!("{line}"),
-            },
+            Some(Message::JobLog { stream, line, .. }) => {
+                let stored = match stream {
+                    LogStream::Stderr => {
+                        eprintln!("{line}");
+                        format!("[stderr] {line}")
+                    }
+                    LogStream::System => {
+                        eprintln!("[{line}]");
+                        format!("[system] {line}")
+                    }
+                    LogStream::Stdout => {
+                        println!("{line}");
+                        line
+                    }
+                };
+                if let Err(e) = gpumesh_storage::JobRecord::append_log(&job_id, &stored) {
+                    warn!("failed to capture job log for {job_id}: {e}");
+                }
+            }
             Some(Message::JobStatus {
                 state,
                 exit_code: code,
@@ -86,8 +98,7 @@ pub async fn run_remote_job(
                 vram_total_mb,
                 ..
             }) => {
-                if let (Some(u), Some(used), Some(total)) =
-                    (gpu_util, vram_used_mb, vram_total_mb)
+                if let (Some(u), Some(used), Some(total)) = (gpu_util, vram_used_mb, vram_total_mb)
                 {
                     eprintln!("GPU util: {u}%  VRAM: {used} / {total} MB");
                 }
@@ -163,7 +174,9 @@ pub async fn transfer_file_from_peer(
                     break;
                 }
             }
-            Some(Message::FileAck { ok: false, error, .. }) => {
+            Some(Message::FileAck {
+                ok: false, error, ..
+            }) => {
                 return Err(GpuMeshError::Storage(
                     error.unwrap_or_else(|| "download failed".into()),
                 ));
@@ -211,17 +224,17 @@ async fn upload_file(
     .await?;
 
     // Phase 4: wait for resume handshake before sending chunks.
-    let mut start = 0u64;
-    match conn.recv().await? {
+    let start = match conn.recv().await? {
         Some(Message::FileAck {
             ok: true,
             resume_from,
             ..
         }) => {
-            start = resume_from.unwrap_or(0).min(data.len() as u64);
+            let start = resume_from.unwrap_or(0).min(data.len() as u64);
             if start > 0 {
                 tracing::info!("resuming upload of {remote_path} from byte {start}");
             }
+            start
         }
         Some(Message::FileAck {
             ok: false, error, ..
@@ -235,7 +248,7 @@ async fn upload_file(
                 "expected FileAck after offer, got {other:?}"
             )));
         }
-    }
+    };
 
     const CHUNK: usize = 256 * 1024;
     let mut offset = start;
@@ -281,7 +294,7 @@ async fn upload_file(
 /// Provider-side session loop after handshake + auth.
 pub async fn serve_peer_session(node: &MeshNode, conn: PeerConnection) -> Result<()> {
     let conn = Arc::new(conn);
-    let mut uploads: std::collections::HashMap<String, (String, Vec<u8>)> =
+    let mut uploads: std::collections::HashMap<String, (FileOffer, Vec<u8>)> =
         std::collections::HashMap::new();
 
     loop {
@@ -311,7 +324,7 @@ pub async fn serve_peer_session(node: &MeshNode, conn: PeerConnection) -> Result
                             }
                         }
                     }
-                    uploads.insert(offer.transfer_id.clone(), (offer.path.clone(), buf));
+                    uploads.insert(offer.transfer_id.clone(), (offer.clone(), buf));
                     conn.send(Message::FileAck {
                         transfer_id: offer.transfer_id,
                         ok: true,
@@ -327,7 +340,7 @@ pub async fn serve_peer_session(node: &MeshNode, conn: PeerConnection) -> Result
             Message::FileChunk(chunk) => {
                 let tid = chunk.transfer_id.clone();
                 let (path_clone, snapshot, eof) = {
-                    let Some((path, buf)) = uploads.get_mut(&tid) else {
+                    let Some((offer, buf)) = uploads.get_mut(&tid) else {
                         continue;
                     };
                     if chunk.offset as usize > buf.len() {
@@ -342,7 +355,7 @@ pub async fn serve_peer_session(node: &MeshNode, conn: PeerConnection) -> Result
                         buf.truncate(chunk.offset as usize);
                         buf.extend_from_slice(&chunk.data);
                     }
-                    (path.clone(), buf.clone(), chunk.eof)
+                    (offer.path.clone(), buf.clone(), chunk.eof)
                 };
                 if let Ok(dest) = upload_dest(&path_clone, &tid) {
                     if let Some(parent) = dest.parent() {
@@ -352,39 +365,96 @@ pub async fn serve_peer_session(node: &MeshNode, conn: PeerConnection) -> Result
                     let _ = std::fs::write(&partial, &snapshot);
                 }
                 if eof {
-                    let (path, data) = uploads.remove(&tid).unwrap();
-                    let dest = upload_dest(&path, &tid)?;
+                    let (offer, data) = uploads.remove(&tid).unwrap();
+                    let dest = upload_dest(&offer.path, &tid)?;
                     if let Some(parent) = dest.parent() {
                         std::fs::create_dir_all(parent)?;
                     }
                     std::fs::write(&dest, &data)?;
+                    let actual_sha = {
+                        let mut h = Sha256::new();
+                        h.update(&data);
+                        hex::encode(h.finalize())
+                    };
+                    let hash_ok = offer.sha256_hex.is_empty()
+                        || actual_sha.eq_ignore_ascii_case(&offer.sha256_hex);
+                    if !hash_ok {
+                        let _ = std::fs::remove_file(&dest);
+                    }
                     let _ = std::fs::remove_file(format!("{}.partial", dest.display()));
                     conn.send(Message::FileAck {
                         transfer_id: tid,
-                        ok: true,
-                        error: None,
+                        ok: hash_ok,
+                        error: (!hash_ok).then(|| {
+                            format!(
+                                "sha256 mismatch: expected {}, got {actual_sha}",
+                                offer.sha256_hex
+                            )
+                        }),
                         resume_from: None,
                     })
                     .await?;
                 }
             }
             Message::RunJob(req) => {
-                if !*node.sharing.read().await
-                    && !node.config.read().await.sharing_enabled
-                {
+                if !*node.sharing.read().await && !node.config.read().await.sharing_enabled {
                     conn.send(Message::JobRejected {
                         reason: "provider is not sharing".into(),
                     })
                     .await?;
                     continue;
                 }
+                let cfg = StateStore::load_config()?;
+                let image = if req.image.is_empty() {
+                    DEFAULT_IMAGE
+                } else {
+                    &req.image
+                };
+                if !image_allowed(image, &cfg.allowed_images) {
+                    conn.send(Message::JobRejected {
+                        reason: format!("container image is not allowed: {image}"),
+                    })
+                    .await?;
+                    continue;
+                }
+                let gpus = GpuMonitor::detect().unwrap_or_default();
+                let gpu = gpus.first();
+                if let (Some(max), Some(util)) =
+                    (cfg.max_gpu_utilization, gpu.and_then(|g| g.utilization_gpu))
+                {
+                    if util >= max as u32 {
+                        conn.send(Message::JobRejected {
+                            reason: format!(
+                                "GPU utilization {util}% is at or above configured maximum {max}%"
+                            ),
+                        })
+                        .await?;
+                        continue;
+                    }
+                }
+                let need = match (cfg.max_vram_mb, req.gpu_memory_mb) {
+                    (Some(a), Some(b)) => Some(a.max(b)),
+                    (Some(a), None) | (None, Some(a)) => Some(a),
+                    (None, None) => None,
+                };
+                if let Some(need) = need {
+                    let free = gpu.map(|g| g.vram_free_mb).unwrap_or(0);
+                    if free < need {
+                        conn.send(Message::JobRejected {
+                            reason: format!(
+                                "insufficient free VRAM: need {need} MB, available {free} MB"
+                            ),
+                        })
+                        .await?;
+                        continue;
+                    }
+                }
                 let conn2 = conn.clone();
                 let runtime = node.runtime.clone();
                 let limits = node.share_limits().await;
+                let harden = cfg.docker_harden;
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        execute_remote_job(runtime, conn2, req, limits).await
-                    {
+                    if let Err(e) = execute_remote_job(runtime, conn2, req, limits, harden).await {
                         warn!("job execution error: {e}");
                     }
                 });
@@ -393,6 +463,48 @@ pub async fn serve_peer_session(node: &MeshNode, conn: PeerConnection) -> Result
                 let name = format!("gpumesh-{job_id}");
                 let ok = node.runtime.cancel(&name).await.is_ok();
                 conn.send(Message::CancelAck { job_id, ok }).await?;
+            }
+            Message::GroupJoinNotify {
+                group_id,
+                group_name,
+                member_node_id,
+                member_name,
+                public_key_hex,
+                signature,
+            } => {
+                let expected_node_id = gpumesh_security::node_id_from_public_hex(&public_key_hex)?;
+                if expected_node_id != member_node_id
+                    || conn.peer_node_id.as_deref() != Some(member_node_id.as_str())
+                {
+                    return Err(GpuMeshError::NotAuthorized(
+                        "group join identity mismatch".into(),
+                    ));
+                }
+                let canonical = serde_json::to_vec(&(
+                    &group_id,
+                    &group_name,
+                    &member_node_id,
+                    &member_name,
+                    &public_key_hex,
+                ))
+                .map_err(|e| GpuMeshError::Protocol(e.to_string()))?;
+                gpumesh_security::verify_signature(&public_key_hex, &canonical, &signature)?;
+                let mut groups = gpumesh_storage::GroupStore::load()?;
+                let group = groups
+                    .get(&group_id)
+                    .ok_or_else(|| GpuMeshError::Other("group not found".into()))?;
+                if group.owner_node_id != node.identity.node_id || group.name != group_name {
+                    return Err(GpuMeshError::NotAuthorized(
+                        "only the local group owner can accept joins".into(),
+                    ));
+                }
+                groups.add_member(
+                    &group_id,
+                    &member_node_id,
+                    &member_name,
+                    gpumesh_storage::GroupRole::Member,
+                )?;
+                info!("added {member_name} to group {group_name}");
             }
             Message::Error { message } => {
                 warn!("peer error: {message}");
@@ -406,14 +518,58 @@ pub async fn serve_peer_session(node: &MeshNode, conn: PeerConnection) -> Result
 
 fn upload_dest(path: &str, transfer_id: &str) -> Result<PathBuf> {
     if path == "workload.gpk" {
+        let transfer_path = Path::new(transfer_id);
+        if transfer_id.is_empty()
+            || transfer_path.is_absolute()
+            || transfer_path.components().count() != 1
+            || !matches!(
+                transfer_path.components().next(),
+                Some(std::path::Component::Normal(_))
+            )
+        {
+            return Err(GpuMeshError::Storage("unsafe transfer id rejected".into()));
+        }
         let dir = StateStore::ensure_job_dir(transfer_id)?;
         Ok(dir.join("workload.gpk"))
     } else {
         let base = gpumesh_common::work_dir().join("incoming");
         std::fs::create_dir_all(&base)?;
-        let clean = path.trim_start_matches('/').replace("..", "_");
-        Ok(base.join(clean))
+        let relative = Path::new(path);
+        if relative.is_absolute()
+            || relative.components().any(|c| {
+                matches!(
+                    c,
+                    std::path::Component::ParentDir | std::path::Component::Prefix(_)
+                )
+            })
+        {
+            return Err(GpuMeshError::Storage(format!(
+                "unsafe upload path rejected: {path}"
+            )));
+        }
+        let base = std::fs::canonicalize(&base)?;
+        let dest = base.join(relative);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+            let canonical_parent = std::fs::canonicalize(parent)?;
+            if !canonical_parent.starts_with(&base) {
+                return Err(GpuMeshError::Storage(format!(
+                    "upload path escapes incoming directory: {path}"
+                )));
+            }
+        }
+        Ok(dest)
     }
+}
+
+fn image_allowed(image: &str, allowed: &[String]) -> bool {
+    allowed.iter().any(|entry| {
+        let entry = entry.trim_end_matches('/');
+        image == entry
+            || image
+                .strip_prefix(entry)
+                .is_some_and(|suffix| suffix.starts_with(':') || suffix.starts_with('/'))
+    })
 }
 
 async fn serve_download(conn: &PeerConnection, path: &str, transfer_id: &str) -> Result<()> {
@@ -488,6 +644,7 @@ async fn execute_remote_job(
     conn: Arc<PeerConnection>,
     req: RunJobRequest,
     limits: gpumesh_common::ShareLimits,
+    harden: bool,
 ) -> Result<()> {
     conn.send(Message::JobAccepted {
         job_id: req.job_id.clone(),
@@ -564,6 +721,7 @@ async fn execute_remote_job(
         container_workdir: req.workdir,
         limits,
         gpu_memory_mb: req.gpu_memory_mb,
+        harden,
     };
 
     let (_handle, result) = runtime.run_job(job_req, tx).await?;
@@ -613,6 +771,7 @@ pub async fn run_local_job(
         container_workdir: "/workspace".into(),
         limits,
         gpu_memory_mb: None,
+        harden: true,
     };
     let (_h, result) = node.runtime.run_job(req, tx).await?;
     Ok(result.exit_code.unwrap_or(1))

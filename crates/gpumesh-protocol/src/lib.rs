@@ -22,6 +22,12 @@ pub struct ProtocolHello {
     pub vram_total_mb: Option<u64>,
     pub vram_free_mb: Option<u64>,
     pub status: PeerStatus,
+    /// Unix timestamp when this Hello was signed.
+    #[serde(default)]
+    pub issued_at: i64,
+    /// Ed25519 signature over canonical Hello bytes (signature field empty).
+    #[serde(default)]
+    pub signature: String,
 }
 
 impl ProtocolHello {
@@ -34,6 +40,13 @@ impl ProtocolHello {
         } else {
             Ok(())
         }
+    }
+
+    /// Canonical bytes for signing (signature cleared).
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut clone = self.clone();
+        clone.signature.clear();
+        serde_json::to_vec(&clone).unwrap_or_default()
     }
 }
 
@@ -87,6 +100,14 @@ pub enum Message {
         /// If set after FileOffer, sender should resume uploading from this byte offset.
         #[serde(default)]
         resume_from: Option<u64>,
+    },
+    GroupJoinNotify {
+        group_id: String,
+        group_name: String,
+        member_node_id: String,
+        member_name: String,
+        public_key_hex: String,
+        signature: String,
     },
     ExecRequest(ExecRequest),
     ExecOutput {
@@ -185,7 +206,8 @@ pub struct ExecRequest {
 pub fn short_job_id() -> String {
     let id = Uuid::new_v4();
     let s = id.simple().to_string();
-    s[..5].to_string()
+    // 12 hex chars — short but collision-resistant enough for concurrent jobs.
+    s[..12].to_string()
 }
 
 pub fn new_transfer_id() -> String {
@@ -228,8 +250,8 @@ impl Encoder<Message> for JsonFrameCodec {
     type Error = io::Error;
 
     fn encode(&mut self, item: Message, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let data = serde_json::to_vec(&item)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let data =
+            serde_json::to_vec(&item).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         if data.len() > MAX_FRAME_SIZE {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,

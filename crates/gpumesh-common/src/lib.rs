@@ -6,10 +6,16 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const PROTOCOL_MAJOR: u16 = 1;
-pub const PROTOCOL_MINOR: u16 = 0;
+pub const PROTOCOL_MINOR: u16 = 1;
 pub const DEFAULT_AGENT_PORT: u16 = 47000;
 pub const DEFAULT_IMAGE: &str = "nvidia/cuda:12.8.0-runtime-ubuntu22.04";
 pub const APP_DIR_NAME: &str = ".gpumesh";
+/// Pairing / invite codes expire after this many seconds.
+pub const PAIRING_TTL_SECS: i64 = 3600;
+/// Signed Hello messages older than this are rejected.
+pub const HELLO_TTL_SECS: i64 = 300;
+/// Public announce signatures must be fresher than this.
+pub const ANNOUNCE_TTL_SECS: i64 = 180;
 
 #[derive(Debug, Error)]
 pub enum GpuMeshError {
@@ -67,8 +73,7 @@ impl From<anyhow::Error> for GpuMeshError {
 pub fn config_dir() -> PathBuf {
     if let Ok(home) = std::env::var("GPUMESH_HOME") {
         let p = PathBuf::from(home);
-        if p
-            .file_name()
+        if p.file_name()
             .and_then(|n| n.to_str())
             .is_some_and(|n| n == APP_DIR_NAME)
         {
@@ -128,6 +133,16 @@ pub struct NodeConfig {
     pub default_retries: u32,
     /// Update check URL (JSON with `version` + `url` fields).
     pub update_url: Option<String>,
+    /// Allowed container image prefixes/names for remote jobs.
+    #[serde(default = "default_allowed_images")]
+    pub allowed_images: Vec<String>,
+    /// Harden Docker: drop caps, no-new-privileges, read-only rootfs.
+    #[serde(default = "default_true")]
+    pub docker_harden: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for NodeConfig {
@@ -144,20 +159,46 @@ impl Default for NodeConfig {
             max_vram_mb: None,
             max_gpu_utilization: None,
             max_concurrent_jobs: 1,
-            max_runtime_secs: None,
-            max_cpu_cores: None,
-            max_ram_mb: None,
+            max_runtime_secs: Some(3600),
+            max_cpu_cores: Some(4.0),
+            max_ram_mb: Some(8192),
             max_disk_mb: None,
             sharing_enabled: false,
             public_listing: false,
             region: None,
             default_retries: 0,
             update_url: Some(
-                "https://raw.githubusercontent.com/gpumesh/gpumesh/main/dist/latest.json"
-                    .into(),
+                "https://raw.githubusercontent.com/gpumesh/gpumesh/main/dist/latest.json".into(),
             ),
+            allowed_images: default_allowed_images(),
+            docker_harden: true,
         }
     }
+}
+
+pub fn default_allowed_images() -> Vec<String> {
+    vec![
+        "nvidia/cuda".into(),
+        "python".into(),
+        "pytorch".into(),
+        "tensorflow".into(),
+        "nvcr.io".into(),
+        DEFAULT_IMAGE.into(),
+    ]
+}
+
+pub fn share_pid_path() -> PathBuf {
+    config_dir().join("share.pid")
+}
+
+pub fn share_stop_path() -> PathBuf {
+    config_dir().join("share.stop")
+}
+
+pub fn api_token() -> Option<String> {
+    std::env::var("GPUMESH_API_TOKEN")
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

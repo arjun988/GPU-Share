@@ -21,7 +21,7 @@ Groups live in `~/.gpumesh/groups.json`. The scheduler probes paired members, fi
 
 ```bash
 # Terminal A — API
-cd services/control-plane && go run .
+cargo run -p gpumesh-control
 
 # Terminal B — UI
 cd dashboard && npm install && npm run dev

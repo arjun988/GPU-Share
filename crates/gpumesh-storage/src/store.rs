@@ -36,8 +36,8 @@ impl PeerStore {
         let path = peers_path();
         let peers = if path.exists() {
             let data = fs::read_to_string(&path)?;
-            let file: PeersFile = serde_json::from_str(&data)
-                .map_err(|e| GpuMeshError::Storage(e.to_string()))?;
+            let file: PeersFile =
+                serde_json::from_str(&data).map_err(|e| GpuMeshError::Storage(e.to_string()))?;
             file.peers
         } else {
             HashMap::new()
@@ -139,8 +139,8 @@ impl StateStore {
 
     pub fn save_allowlist(list: &AllowList) -> Result<()> {
         Self::ensure_dirs()?;
-        let data = serde_json::to_string_pretty(list)
-            .map_err(|e| GpuMeshError::Storage(e.to_string()))?;
+        let data =
+            serde_json::to_string_pretty(list).map_err(|e| GpuMeshError::Storage(e.to_string()))?;
         fs::write(allowlist_path(), data)?;
         Ok(())
     }

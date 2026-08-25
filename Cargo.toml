@@ -8,6 +8,7 @@ members = [
     "crates/gpumesh-gpu",
     "crates/gpumesh-runtime",
     "crates/gpumesh-network",
+    "crates/gpumesh-relay",
     "crates/gpumesh-core",
     "crates/gpumesh-agent",
     "crates/gpumesh-cli",

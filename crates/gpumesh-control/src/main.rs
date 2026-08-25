@@ -3,23 +3,29 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
-use axum::http::{Method, StatusCode};
+use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
+use gpumesh_network::{PublicListing, PublicUnannounce};
+use gpumesh_security::{verify_public_listing, verify_signature};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct AppState {
     inner: Arc<RwLock<Store>>,
+    state_path: Arc<PathBuf>,
+    api_token: Option<Arc<String>>,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 struct Store {
     peers: HashMap<String, PeerEntry>,
     nodes: HashMap<String, Announce>,
@@ -33,46 +39,6 @@ struct Store {
 struct PublicEntry {
     listing: PublicListing,
     updated_at: i64,
-}
-
-/// Public GPU registry listing (Phase 7) — metadata only.
-#[derive(Clone, Serialize, Deserialize, Default)]
-struct PublicListing {
-    node_id: String,
-    node_name: String,
-    #[serde(default)]
-    public_key_hex: String,
-    #[serde(default)]
-    addrs: Vec<String>,
-    #[serde(default)]
-    gpu_model: Option<String>,
-    #[serde(default)]
-    vram_mb: Option<u64>,
-    #[serde(default)]
-    vram_free_mb: Option<u64>,
-    #[serde(default)]
-    cuda_version: Option<String>,
-    #[serde(default)]
-    availability: String,
-    #[serde(default)]
-    perf_score: Option<u32>,
-    #[serde(default)]
-    latency_ms: Option<u32>,
-    #[serde(default)]
-    region: Option<String>,
-    #[serde(default)]
-    uptime_secs: Option<u64>,
-    #[serde(default)]
-    sharing: bool,
-    #[serde(default)]
-    public: bool,
-    #[serde(default)]
-    utilization: Option<u32>,
-}
-
-#[derive(Deserialize)]
-struct UnannounceBody {
-    node_id: String,
 }
 
 #[derive(Deserialize)]
@@ -196,15 +162,31 @@ struct Overview {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
-    let state = AppState::default();
+    let state_path = PathBuf::from(
+        std::env::var("GPUMESH_CONTROL_STATE")
+            .unwrap_or_else(|_| "./.gpumesh-control-state.json".into()),
+    );
+    let store = if state_path.exists() {
+        let data = std::fs::read(&state_path)?;
+        serde_json::from_slice(&data)?
+    } else {
+        Store::default()
+    };
+    let state = AppState {
+        inner: Arc::new(RwLock::new(store)),
+        state_path: Arc::new(state_path),
+        api_token: gpumesh_common::api_token().map(Arc::new),
+    };
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin([
+            HeaderValue::from_static("http://127.0.0.1:3000"),
+            HeaderValue::from_static("http://localhost:3000"),
+            HeaderValue::from_static("http://127.0.0.1:3001"),
+        ])
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-        .allow_headers(Any);
+        .allow_headers([CONTENT_TYPE, AUTHORIZATION]);
 
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
@@ -236,54 +218,100 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn authorized(state: &AppState, headers: &HeaderMap) -> bool {
+    let Some(token) = &state.api_token else {
+        return true;
+    };
+    headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value == format!("Bearer {token}"))
+}
+
+async fn persist_state(state: &AppState) -> Result<(), StatusCode> {
+    let data = {
+        let store = state.inner.read().await;
+        serde_json::to_vec_pretty(&*store).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    };
+    if let Some(parent) = state.state_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    tokio::fs::write(&*state.state_path, data)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 async fn announce(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(ann): Json<Announce>,
 ) -> StatusCode {
+    if !authorized(&state, &headers) {
+        return StatusCode::UNAUTHORIZED;
+    }
     if ann.node_id.is_empty() {
         return StatusCode::BAD_REQUEST;
     }
-    let mut s = state.inner.write().await;
-    upsert_node(&mut s, ann);
-    StatusCode::NO_CONTENT
+    {
+        let mut s = state.inner.write().await;
+        upsert_node(&mut s, ann);
+    }
+    persist_state(&state)
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .unwrap_or_else(|status| status)
 }
 
-async fn sync(State(state): State<AppState>, Json(payload): Json<SyncPayload>) -> StatusCode {
+async fn sync(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<SyncPayload>,
+) -> StatusCode {
+    if !authorized(&state, &headers) {
+        return StatusCode::UNAUTHORIZED;
+    }
     if payload.node.node_id.is_empty() {
         return StatusCode::BAD_REQUEST;
     }
-    let mut s = state.inner.write().await;
-    let node_id = payload.node.node_id.clone();
-    let node_name = payload.node.node_name.clone();
-    upsert_node(&mut s, payload.node);
+    {
+        let mut s = state.inner.write().await;
+        let node_id = payload.node.node_id.clone();
+        let node_name = payload.node.node_name.clone();
+        upsert_node(&mut s, payload.node);
 
-    s.gpus.retain(|g| g.node_id != node_id);
-    let mut gpus = payload.gpus;
-    for g in &mut gpus {
-        g.node_id = node_id.clone();
-        g.node_name = node_name.clone();
-    }
-    s.gpus.extend(gpus);
+        s.gpus.retain(|g| g.node_id != node_id);
+        let mut gpus = payload.gpus;
+        for g in &mut gpus {
+            g.node_id = node_id.clone();
+            g.node_name = node_name.clone();
+        }
+        s.gpus.extend(gpus);
 
-    s.jobs.retain(|j| j.node_id != node_id);
-    let mut jobs = payload.jobs;
-    for j in &mut jobs {
-        j.node_id = node_id.clone();
-    }
-    s.jobs.extend(jobs);
-    s.groups = payload.groups;
+        s.jobs.retain(|j| j.node_id != node_id);
+        let mut jobs = payload.jobs;
+        for j in &mut jobs {
+            j.node_id = node_id.clone();
+        }
+        s.jobs.extend(jobs);
+        s.groups = payload.groups;
 
-    // Merge paired peer metadata
-    for p in payload.peers {
-        s.peers.insert(
-            p.node_id.clone(),
-            PeerEntry {
-                peer: p,
-                updated_at: Utc::now().timestamp(),
-            },
-        );
+        // Merge paired peer metadata
+        for p in payload.peers {
+            s.peers.insert(
+                p.node_id.clone(),
+                PeerEntry {
+                    peer: p,
+                    updated_at: Utc::now().timestamp(),
+                },
+            );
+        }
     }
-    StatusCode::NO_CONTENT
+    persist_state(&state)
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .unwrap_or_else(|status| status)
 }
 
 fn upsert_node(s: &mut Store, ann: Announce) {
@@ -411,39 +439,67 @@ const PUBLIC_TTL_SECS: i64 = 180;
 
 async fn public_announce(
     State(state): State<AppState>,
-    Json(mut listing): Json<PublicListing>,
+    headers: HeaderMap,
+    Json(listing): Json<PublicListing>,
 ) -> StatusCode {
-    if listing.node_id.is_empty() {
+    if !authorized(&state, &headers) {
+        return StatusCode::UNAUTHORIZED;
+    }
+    if listing.node_id.is_empty() || verify_public_listing(&listing).is_err() {
         return StatusCode::BAD_REQUEST;
     }
-    listing.public = true;
-    if listing.availability.is_empty() {
-        listing.availability = if listing.sharing {
-            "idle".into()
-        } else {
-            "offline".into()
-        };
+    {
+        let mut s = state.inner.write().await;
+        s.public.insert(
+            listing.node_id.clone(),
+            PublicEntry {
+                listing,
+                updated_at: Utc::now().timestamp(),
+            },
+        );
     }
-    let mut s = state.inner.write().await;
-    s.public.insert(
-        listing.node_id.clone(),
-        PublicEntry {
-            listing,
-            updated_at: Utc::now().timestamp(),
-        },
-    );
-    StatusCode::NO_CONTENT
+    persist_state(&state)
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .unwrap_or_else(|status| status)
 }
 
 async fn public_unannounce(
     State(state): State<AppState>,
-    Json(body): Json<UnannounceBody>,
+    headers: HeaderMap,
+    Json(body): Json<PublicUnannounce>,
 ) -> StatusCode {
-    if body.node_id.is_empty() {
+    if !authorized(&state, &headers) {
+        return StatusCode::UNAUTHORIZED;
+    }
+    let now = Utc::now().timestamp();
+    if body.node_id.is_empty()
+        || body.issued_at <= 0
+        || now - body.issued_at > gpumesh_common::ANNOUNCE_TTL_SECS
+        || body.issued_at > now + 60
+    {
         return StatusCode::BAD_REQUEST;
     }
-    state.inner.write().await.public.remove(&body.node_id);
-    StatusCode::NO_CONTENT
+    {
+        let mut s = state.inner.write().await;
+        let Some(entry) = s.public.get(&body.node_id) else {
+            return StatusCode::NOT_FOUND;
+        };
+        if verify_signature(
+            &entry.listing.public_key_hex,
+            &body.canonical_bytes(),
+            &body.signature,
+        )
+        .is_err()
+        {
+            return StatusCode::UNAUTHORIZED;
+        }
+        s.public.remove(&body.node_id);
+    }
+    persist_state(&state)
+        .await
+        .map(|_| StatusCode::NO_CONTENT)
+        .unwrap_or_else(|status| status)
 }
 
 async fn public_search(
@@ -478,8 +534,7 @@ async fn public_search(
         })
         .filter(|e| {
             if let Some(min) = q.min_vram_mb {
-                e.listing.vram_mb.unwrap_or(0) >= min
-                    || e.listing.vram_free_mb.unwrap_or(0) >= min
+                e.listing.vram_mb.unwrap_or(0) >= min || e.listing.vram_free_mb.unwrap_or(0) >= min
             } else {
                 true
             }

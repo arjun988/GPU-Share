@@ -127,10 +127,30 @@ pub fn unpack_archive(archive: &Path, dest: &Path) -> Result<PackageManifest> {
 }
 
 fn sanitize_rel(dest: &Path, rel: &str) -> Result<PathBuf> {
-    if rel.contains("..") {
+    let rel = rel.trim().trim_start_matches(['/', '\\']);
+    if rel.is_empty() {
+        return Err(GpuMeshError::Storage("empty path in package".into()));
+    }
+    if rel.contains("..") || Path::new(rel).is_absolute() {
         return Err(GpuMeshError::Storage(format!(
             "illegal path in package: {rel}"
         )));
     }
-    Ok(dest.join(rel))
+    // Reject Windows drive-style and UNC
+    if rel.chars().nth(1) == Some(':') || rel.starts_with("\\\\") {
+        return Err(GpuMeshError::Storage(format!(
+            "illegal path in package: {rel}"
+        )));
+    }
+    let path = dest.join(rel);
+    let dest_canon = dest.canonicalize().unwrap_or_else(|_| dest.to_path_buf());
+    // Best-effort containment check after join (parent may not exist yet).
+    if let Ok(parent) = path.parent().unwrap_or(dest).canonicalize() {
+        if !parent.starts_with(&dest_canon) && parent != dest_canon {
+            return Err(GpuMeshError::Storage(format!(
+                "path escapes package root: {rel}"
+            )));
+        }
+    }
+    Ok(path)
 }

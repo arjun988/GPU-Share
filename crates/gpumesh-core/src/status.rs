@@ -76,11 +76,7 @@ pub fn format_peers_table(
             .iter()
             .find(|(id, _, _, _)| id == &p.node_id)
             .map(|(_, s, g, v)| (*s, g.clone(), *v))
-            .unwrap_or((
-                PeerStatus::Unknown,
-                p.gpu_model.clone(),
-                p.vram_mb,
-            ));
+            .unwrap_or((PeerStatus::Unknown, p.gpu_model.clone(), p.vram_mb));
         let gpu = gpu.unwrap_or_else(|| "-".into());
         let vram_s = vram
             .map(|m| format!("{}GB", (m as f64 / 1024.0).round() as u64))

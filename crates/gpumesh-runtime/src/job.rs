@@ -13,6 +13,13 @@ pub struct JobRequest {
     pub container_workdir: String,
     pub limits: ShareLimits,
     pub gpu_memory_mb: Option<u64>,
+    /// Drop capabilities / read-only rootfs when true.
+    #[serde(default = "default_harden")]
+    pub harden: bool,
+}
+
+fn default_harden() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

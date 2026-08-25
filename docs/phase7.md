@@ -13,6 +13,9 @@ gpumesh share --public --region us-west
 ```
 
 Heartbeats refresh the listing every ~45s. TTL on the registry is ~3 minutes.
+Listings and unannounce requests are signed with the provider's Ed25519 identity;
+the registry verifies key ownership and freshness before changing state. Public
+listings intentionally omit network addresses and expose metadata only.
 
 ## Consumer
 
@@ -49,5 +52,10 @@ gpumesh run --peer <name> …
 | POST | `/v1/public/unannounce` |
 | GET | `/v1/public/search?gpu=&min_vram_mb=&cuda=&region=&available=` |
 | GET | `/v1/public/nodes/{id}` |
+
+The Rust control plane (`cargo run -p gpumesh-control`) is the primary registry.
+Set `GPUMESH_API_TOKEN` on clients and the control plane to require bearer
+authentication for writes. Relay fallback is provided by the `gpumesh-relay`
+crate. GPUMesh is licensed under Apache-2.0.
 
 No marketplace / payments (Phase 10). Reputation is Phase 8.

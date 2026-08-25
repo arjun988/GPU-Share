@@ -68,9 +68,7 @@ pub async fn schedule_peer(node: &MeshNode, req: ScheduleRequest) -> Result<Sche
         if let Some(need) = req.gpu_memory_mb {
             let free = info.vram_free_mb.unwrap_or(0);
             if free < need {
-                debug!(
-                    "peer {name} free VRAM {free} MB < required {need} MB"
-                );
+                debug!("peer {name} free VRAM {free} MB < required {need} MB");
                 continue;
             }
         }
@@ -103,16 +101,11 @@ pub async fn schedule_peer(node: &MeshNode, req: ScheduleRequest) -> Result<Sche
     }
 
     scored.sort_by(|a, b| b.0.cmp(&a.0));
-    scored
-        .into_iter()
-        .next()
-        .map(|(_, r)| r)
-        .ok_or_else(|| {
-            GpuMeshError::Other(
-                "no idle peer with enough free VRAM — try a lower --gpu-memory or wait"
-                    .into(),
-            )
-        })
+    scored.into_iter().next().map(|(_, r)| r).ok_or_else(|| {
+        GpuMeshError::Other(
+            "no idle peer with enough free VRAM — try a lower --gpu-memory or wait".into(),
+        )
+    })
 }
 
 async fn candidate_peers(node: &MeshNode, group: Option<&str>) -> Result<Vec<(String, String)>> {

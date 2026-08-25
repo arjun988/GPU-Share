@@ -1,4 +1,4 @@
-# Architecture (Phases 0–3)
+# Architecture (Phases 0–7)
 
 ```text
 gpumesh (CLI) ──QUIC──► gpumesh agent
@@ -11,12 +11,15 @@ gpumesh (CLI) ──QUIC──► gpumesh agent
 ## Data plane
 
 - Transport: Quinn QUIC + TLS 1.3 (ALPN `gpumesh/1`)
-- Application auth: Ed25519 Hello / HelloAck (TLS verifier is intentionally permissive; trust is at the app layer + allowlist)
+- Application auth: fresh, signed Ed25519 Hello / HelloAck (TLS verifier is intentionally permissive; trust is at the app layer + allowlist)
 - Framing: `[u32 BE length][JSON Message]`
+- WAN fallback: the `gpumesh-relay` crate relays encrypted peer sessions when direct dialing fails
 
 ## Control plane
 
-`services/control-plane` is optional HTTP rendezvous for peer metadata. It must never receive workload bytes.
+`gpumesh-control` is the primary optional HTTP rendezvous for peer metadata. Public
+registry listings are signed, freshness-checked, and omit peer addresses. The
+control plane must never receive workload bytes.
 
 ## Local state
 
@@ -28,3 +31,5 @@ gpumesh (CLI) ──QUIC──► gpumesh agent
 - `allowlist.json` — allow / deny
 - `jobs/` — packaged workloads and workspaces
 - `work/` — inbound file transfers
+
+GPUMesh source and binaries are distributed under Apache-2.0.

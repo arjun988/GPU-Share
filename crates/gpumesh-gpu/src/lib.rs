@@ -92,9 +92,10 @@ fn try_nvml() -> Result<Vec<GpuInfo>> {
         let util = device.utilization_rates().ok();
         let temp = device.temperature(TemperatureSensor::Gpu).ok();
         let power = device.power_usage().ok().map(|mw| mw / 1000);
-        let cc = device.cuda_compute_capability().ok().map(|c| {
-            format!("{}.{}", c.major, c.minor)
-        });
+        let cc = device
+            .cuda_compute_capability()
+            .ok()
+            .map(|c| format!("{}.{}", c.major, c.minor));
 
         out.push(GpuInfo {
             index: i,

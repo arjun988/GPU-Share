@@ -62,7 +62,11 @@ gpumesh jobs
 If QUIC cannot connect directly (strict NAT / different networks), set a relay when available:
 
 ```bash
-export GPUMESH_RELAY=host:port
+# On a publicly reachable host (UDP port 4799):
+cargo run -p gpumesh-relay
+
+# On each GPUMesh agent/client:
+export GPUMESH_RELAY=host:4799
 ```
 
 ## Connect N laptops (private cluster)

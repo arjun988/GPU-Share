@@ -2,6 +2,7 @@
 //! Phase 7 adds a public GPU listing + search registry.
 
 use gpumesh_common::{GpuMeshError, Result};
+use gpumesh_security::PublicListingPayload;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -58,6 +59,57 @@ pub struct PublicListing {
     pub public: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub utilization: Option<u32>,
+    #[serde(default)]
+    pub issued_at: i64,
+    #[serde(default)]
+    pub signature: String,
+}
+
+impl PublicListingPayload for PublicListing {
+    fn node_id(&self) -> &str {
+        &self.node_id
+    }
+
+    fn public_key_hex(&self) -> &str {
+        &self.public_key_hex
+    }
+
+    fn issued_at(&self) -> i64 {
+        self.issued_at
+    }
+
+    fn set_issued_at(&mut self, value: i64) {
+        self.issued_at = value;
+    }
+
+    fn signature(&self) -> &str {
+        &self.signature
+    }
+
+    fn set_signature(&mut self, value: String) {
+        self.signature = value;
+    }
+
+    fn canonical_bytes(&self) -> Vec<u8> {
+        let mut clone = self.clone();
+        clone.signature.clear();
+        serde_json::to_vec(&clone).unwrap_or_default()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicUnannounce {
+    pub node_id: String,
+    pub issued_at: i64,
+    pub signature: String,
+}
+
+impl PublicUnannounce {
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut clone = self.clone();
+        clone.signature.clear();
+        serde_json::to_vec(&clone).unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -85,8 +137,11 @@ impl RendezvousClient {
     pub async fn announce(&self, ann: &RendezvousAnnounce) -> Result<()> {
         let url = format!("{}/v1/announce", self.base_url);
         debug!("rendezvous announce → {url}");
-        self.client
-            .post(&url)
+        let mut request = self.client.post(&url);
+        if let Some(token) = gpumesh_common::api_token() {
+            request = request.bearer_auth(token);
+        }
+        request
             .json(ann)
             .send()
             .await
@@ -135,8 +190,11 @@ impl RendezvousClient {
     pub async fn public_announce(&self, listing: &PublicListing) -> Result<()> {
         let url = format!("{}/v1/public/announce", self.base_url);
         debug!("public announce → {url}");
-        self.client
-            .post(&url)
+        let mut request = self.client.post(&url);
+        if let Some(token) = gpumesh_common::api_token() {
+            request = request.bearer_auth(token);
+        }
+        request
             .json(listing)
             .send()
             .await
@@ -146,15 +204,14 @@ impl RendezvousClient {
         Ok(())
     }
 
-    pub async fn public_unannounce(&self, node_id: &str) -> Result<()> {
+    pub async fn public_unannounce(&self, body: &PublicUnannounce) -> Result<()> {
         let url = format!("{}/v1/public/unannounce", self.base_url);
-        #[derive(Serialize)]
-        struct Body<'a> {
-            node_id: &'a str,
+        let mut request = self.client.post(&url);
+        if let Some(token) = gpumesh_common::api_token() {
+            request = request.bearer_auth(token);
         }
-        self.client
-            .post(&url)
-            .json(&Body { node_id })
+        request
+            .json(body)
             .send()
             .await
             .map_err(|e| GpuMeshError::Network(e.to_string()))?

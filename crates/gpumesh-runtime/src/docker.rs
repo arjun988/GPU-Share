@@ -49,24 +49,25 @@ impl DockerRuntime {
         req: JobRequest,
         log_tx: mpsc::Sender<LogEvent>,
     ) -> Result<(JobHandle, JobResult)> {
+        let container_name = format!("gpumesh-{}", req.job_id);
         {
-            let active = self.active.lock().await;
+            let mut active = self.active.lock().await;
             if active.len() as u32 >= req.limits.max_concurrent_jobs {
                 return Err(GpuMeshError::Runtime(format!(
                     "max concurrent jobs reached ({})",
                     req.limits.max_concurrent_jobs
                 )));
             }
+            active.push(container_name.clone());
         }
 
-        let container_name = format!("gpumesh-{}", req.job_id);
         let mut args = vec![
             "run".into(),
             "--rm".into(),
             "--name".into(),
             container_name.clone(),
             "--gpus".into(),
-            "all".into(),
+            "device=0".into(),
             "-v".into(),
             format!(
                 "{}:{}",
@@ -75,7 +76,21 @@ impl DockerRuntime {
             ),
             "-w".into(),
             req.container_workdir.clone(),
+            "--network".into(),
+            "bridge".into(),
         ];
+
+        if req.harden {
+            args.extend([
+                "--cap-drop".into(),
+                "ALL".into(),
+                "--security-opt".into(),
+                "no-new-privileges".into(),
+                "--read-only".into(),
+                "--tmpfs".into(),
+                "/tmp:rw,noexec,nosuid,size=512m".into(),
+            ]);
+        }
 
         if let Some(cpus) = req.limits.max_cpu_cores {
             args.push("--cpus".into());
@@ -85,9 +100,6 @@ impl DockerRuntime {
             args.push("--memory".into());
             args.push(format!("{ram}m"));
         }
-        // Network: restrict by default to bridge (not host)
-        args.push("--network".into());
-        args.push("bridge".into());
 
         for (k, v) in &req.env {
             args.push("-e".into());
@@ -104,30 +116,29 @@ impl DockerRuntime {
             })
             .await;
 
-        self.active.lock().await.push(container_name.clone());
-
-        let mut child = Command::new("docker")
+        let mut child = match Command::new("docker")
             .args(&args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| {
-                GpuMeshError::Runtime(format!("failed to spawn docker: {e}"))
-            })?;
+        {
+            Ok(c) => c,
+            Err(e) => {
+                self.active.lock().await.retain(|n| n != &container_name);
+                return Err(GpuMeshError::Runtime(format!(
+                    "failed to spawn docker: {e}"
+                )));
+            }
+        };
 
         let handle = JobHandle {
             job_id: req.job_id.clone(),
             container_name: container_name.clone(),
         };
 
-        let result = self
-            .wait_with_logs(&mut child, &req, log_tx.clone())
-            .await;
+        let result = self.wait_with_logs(&mut child, &req, log_tx.clone()).await;
 
-        self.active
-            .lock()
-            .await
-            .retain(|n| n != &container_name);
+        self.active.lock().await.retain(|n| n != &container_name);
 
         // Best-effort cleanup if still running
         let _ = Command::new("docker")
@@ -241,10 +252,7 @@ impl DockerRuntime {
             .status()
             .await
             .map_err(|e| GpuMeshError::Runtime(e.to_string()))?;
-        self.active
-            .lock()
-            .await
-            .retain(|n| n != container_name);
+        self.active.lock().await.retain(|n| n != container_name);
         if status.success() {
             Ok(())
         } else {

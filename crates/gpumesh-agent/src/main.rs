@@ -5,6 +5,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use clap::Parser;
 use gpumesh_core::MeshNode;
+use gpumesh_network::RelayClient;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -39,10 +40,19 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
+    let sharing = args.share;
     let mut node = MeshNode::bootstrap()
         .await
         .context("agent requires `gpumesh init` first")?;
     node.start_network().await?;
+    if let Some(parent) = gpumesh_common::share_pid_path().parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let _ = std::fs::remove_file(gpumesh_common::share_stop_path());
+    std::fs::write(
+        gpumesh_common::share_pid_path(),
+        format!("{}\n", std::process::id()),
+    )?;
 
     if args.share {
         node.enable_share(
@@ -58,6 +68,26 @@ async fn main() -> anyhow::Result<()> {
     let public = args.public;
     let node = Arc::new(node);
     let endpoint = node.endpoint()?;
+    if let Some(relay) = RelayClient::from_env() {
+        let relay_node = node.clone();
+        let relay_endpoint = endpoint.clone();
+        tokio::spawn(async move {
+            loop {
+                let result = relay
+                    .register(&relay_endpoint, &relay_node.identity.node_id)
+                    .await;
+                match result {
+                    Ok(conn) => {
+                        if let Err(e) = relay_node.handle_inbound(conn).await {
+                            error!("relay session error: {e}");
+                        }
+                    }
+                    Err(e) => error!("relay registration failed: {e}"),
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+        });
+    }
     info!(
         "gpumesh-agent listening on {:?}; node_id={}",
         endpoint.listen_addr, node.identity.node_id
@@ -68,6 +98,19 @@ async fn main() -> anyhow::Result<()> {
     loop {
         tokio::select! {
             _ = tick.tick() => {
+                let stop_requested = gpumesh_common::share_stop_path().exists();
+                let sharing_disabled = sharing
+                    && gpumesh_storage::StateStore::load_config()
+                        .map(|cfg| !cfg.sharing_enabled)
+                        .unwrap_or(false);
+                if stop_requested || sharing_disabled {
+                    if let Err(e) = node.disable_share().await {
+                        tracing::warn!("failed to disable sharing cleanly: {e}");
+                    }
+                    let _ = std::fs::remove_file(gpumesh_common::share_pid_path());
+                    let _ = std::fs::remove_file(gpumesh_common::share_stop_path());
+                    break;
+                }
                 if public {
                     if let Err(e) = node.publish_public_listing().await {
                         tracing::warn!("public heartbeat failed: {e}");
@@ -92,6 +135,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
+    Ok(())
 }
 
 async fn print_share_banner(node: &MeshNode) {

@@ -3,6 +3,7 @@
 use anyhow::{bail, Result};
 use chrono::Utc;
 use gpumesh_core::MeshNode;
+use gpumesh_protocol::Message;
 use gpumesh_storage::{Group, GroupInvite, GroupMember, GroupRole, GroupStore};
 
 use crate::ui;
@@ -100,9 +101,11 @@ pub async fn dispatch(cmd: GroupCmd) -> Result<()> {
             drop(peers);
             let store = GroupStore::load()?;
             if let Some(g) = store.get(&group) {
-                if let Some(m) = g.members.iter().find(|m| {
-                    m.node_name.eq_ignore_ascii_case(&peer) || m.node_id == id
-                }) {
+                if let Some(m) = g
+                    .members
+                    .iter()
+                    .find(|m| m.node_name.eq_ignore_ascii_case(&peer) || m.node_id == id)
+                {
                     id = m.node_id.clone();
                 }
             }
@@ -132,7 +135,7 @@ pub async fn dispatch(cmd: GroupCmd) -> Result<()> {
             Ok(())
         }
         GroupCmd::Join { code } => {
-            let node = MeshNode::bootstrap().await?;
+            let mut node = MeshNode::bootstrap().await?;
             let cfg = node.config.read().await.clone();
             let invite = GroupInvite::decode(&code)?;
             let mut store = GroupStore::load()?;
@@ -167,7 +170,43 @@ pub async fn dispatch(cmd: GroupCmd) -> Result<()> {
                 store.upsert(g)?;
             }
             ui::ok(format!("Joined group '{}'", invite.group_name));
-            ui::dim("Also pair with the owner if you have not already.");
+            let owner_is_paired = node.peers.read().await.get(&invite.owner_node_id).is_some();
+            if owner_is_paired {
+                if let Err(e) = node.start_network().await {
+                    ui::warn(format!("Joined locally; could not start owner sync: {e}"));
+                } else {
+                    let canonical = serde_json::to_vec(&(
+                        &invite.group_id,
+                        &invite.group_name,
+                        &node.identity.node_id,
+                        &cfg.node_name,
+                        node.identity.public_key_hex(),
+                    ))?;
+                    let notify = Message::GroupJoinNotify {
+                        group_id: invite.group_id.clone(),
+                        group_name: invite.group_name.clone(),
+                        member_node_id: node.identity.node_id.clone(),
+                        member_name: cfg.node_name.clone(),
+                        public_key_hex: node.identity.public_key_hex(),
+                        signature: node.identity.sign_b64(&canonical),
+                    };
+                    match node.connect_peer(&invite.owner_node_id).await {
+                        Ok(conn) => {
+                            if let Err(e) = conn.send(notify).await {
+                                ui::warn(format!("Joined locally; owner sync failed: {e}"));
+                            } else {
+                                ui::dim("Owner was notified of the new member.");
+                            }
+                            conn.close();
+                        }
+                        Err(e) => ui::warn(format!(
+                            "Joined locally; owner is currently unreachable: {e}"
+                        )),
+                    }
+                }
+            } else {
+                ui::dim("Also pair with the owner to sync membership automatically.");
+            }
             Ok(())
         }
         GroupCmd::Delete { name } => {

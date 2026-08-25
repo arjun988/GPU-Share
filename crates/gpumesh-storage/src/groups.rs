@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use chrono::{DateTime, Utc};
-use gpumesh_common::{config_dir, GpuMeshError, Result};
-use gpumesh_security::{verify_signature, NodeIdentity};
+use gpumesh_common::{config_dir, GpuMeshError, Result, PAIRING_TTL_SECS};
+use gpumesh_security::{node_id_from_public_hex, verify_signature, NodeIdentity};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -64,8 +64,8 @@ impl GroupStore {
         let path = Self::path();
         let groups = if path.exists() {
             let data = fs::read_to_string(&path)?;
-            let file: GroupsFile = serde_json::from_str(&data)
-                .map_err(|e| GpuMeshError::Storage(e.to_string()))?;
+            let file: GroupsFile =
+                serde_json::from_str(&data).map_err(|e| GpuMeshError::Storage(e.to_string()))?;
             file.groups
         } else {
             HashMap::new()
@@ -110,9 +110,11 @@ impl GroupStore {
     }
 
     pub fn get(&self, name: &str) -> Option<&Group> {
-        self.groups
-            .get(&name.to_lowercase())
-            .or_else(|| self.groups.values().find(|g| g.id == name || g.name == name))
+        self.groups.get(&name.to_lowercase()).or_else(|| {
+            self.groups
+                .values()
+                .find(|g| g.id == name || g.name == name)
+        })
     }
 
     pub fn get_mut(&mut self, name: &str) -> Option<&mut Group> {
@@ -219,6 +221,23 @@ impl GroupInvite {
         let sig = std::mem::take(&mut clone.signature);
         let msg = canonical_invite_bytes(&clone);
         verify_signature(&self.owner_public_key_hex, &msg, &sig)?;
+        let expected = node_id_from_public_hex(&self.owner_public_key_hex)?;
+        if expected != self.owner_node_id {
+            return Err(GpuMeshError::Identity(
+                "group invite owner does not match public key".into(),
+            ));
+        }
+        let now = Utc::now().timestamp();
+        if self.issued_at <= 0 || now - self.issued_at > PAIRING_TTL_SECS {
+            return Err(GpuMeshError::Identity(format!(
+                "group invite expired (valid {PAIRING_TTL_SECS}s)"
+            )));
+        }
+        if self.issued_at > now + 60 {
+            return Err(GpuMeshError::Identity(
+                "group invite timestamp is in the future".into(),
+            ));
+        }
         Ok(())
     }
 

@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -54,10 +55,7 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
                         g.vram_used_mb, g.vram_total_mb, g.vram_free_mb
                     ),
                 );
-                ui::kv(
-                    "Util",
-                    format!("{}%", g.utilization_gpu.unwrap_or(0)),
-                );
+                ui::kv("Util", format!("{}%", g.utilization_gpu.unwrap_or(0)));
                 if let Some(t) = g.temperature_c {
                     ui::kv("Temp", format!("{t}°C"));
                 }
@@ -81,7 +79,28 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
         } => match action {
             Some(ShareAction::Stop) => {
                 let node = MeshNode::bootstrap().await?;
+                if let Some(parent) = gpumesh_common::share_stop_path().parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(gpumesh_common::share_stop_path(), b"stop\n")?;
                 node.disable_share().await?;
+                if let Ok(pid_text) = std::fs::read_to_string(gpumesh_common::share_pid_path()) {
+                    if let Ok(pid) = pid_text.trim().parse::<u32>() {
+                        #[cfg(windows)]
+                        {
+                            let _ = std::process::Command::new("taskkill")
+                                .args(["/PID", &pid.to_string(), "/T"])
+                                .status();
+                        }
+                        #[cfg(unix)]
+                        {
+                            let _ = std::process::Command::new("kill")
+                                .args(["-TERM", &pid.to_string()])
+                                .status();
+                        }
+                    }
+                }
+                let _ = std::fs::remove_file(gpumesh_common::share_pid_path());
                 ui::ok("Sharing stopped.");
                 Ok(())
             }
@@ -143,12 +162,7 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
                     }
                     _ => PeerStatus::Offline,
                 };
-                live.push((
-                    p.node_id.clone(),
-                    status,
-                    p.gpu_model.clone(),
-                    p.vram_mb,
-                ));
+                live.push((p.node_id.clone(), status, p.gpu_model.clone(), p.vram_mb));
             }
             print!("{}", format_peers_table(&list, &live));
             Ok(())
@@ -260,19 +274,19 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
 
             let mut node = MeshNode::bootstrap().await?;
             let workdir_path = PathBuf::from(&workdir);
+            let requested_gpu_memory_mb = match &gpu_memory {
+                Some(s) => Some(parse_size_to_mb(s)?),
+                None => None,
+            };
 
             if group.is_some() || gpu_memory.is_some() {
                 node.start_network().await?;
-                let mem_mb = match &gpu_memory {
-                    Some(s) => Some(parse_size_to_mb(s)?),
-                    None => None,
-                };
                 let spinner = ui::spinner("Scheduling peer…");
                 let chosen = schedule_peer(
                     &node,
                     ScheduleRequest {
                         group: group.clone(),
-                        gpu_memory_mb: mem_mb,
+                        gpu_memory_mb: requested_gpu_memory_mb,
                         prefer_peer: peer.clone(),
                     },
                 )
@@ -316,6 +330,8 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
                         command.clone(),
                         workdir_path.clone(),
                         env.clone(),
+                        Some(job_id_hint.clone()),
+                        requested_gpu_memory_mb,
                     )
                     .await
                 } else {
@@ -404,7 +420,32 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
                     print!("{log}");
                 }
                 if follow {
-                    ui::warn("--follow not yet attached to live remote streams; use run.");
+                    let path = StateStore::ensure_job_dir(&id)?.join("job.log");
+                    let mut offset = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                    let mut stable_polls = 0u8;
+                    loop {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        let data = std::fs::read(&path).unwrap_or_default();
+                        if data.len() as u64 > offset {
+                            std::io::stdout().write_all(&data[offset as usize..])?;
+                            std::io::stdout().flush()?;
+                            offset = data.len() as u64;
+                            stable_polls = 0;
+                        } else {
+                            stable_polls = stable_polls.saturating_add(1);
+                        }
+                        let finished = JobRecord::load(&id)
+                            .map(|r| {
+                                matches!(
+                                    r.state,
+                                    JobState::Succeeded | JobState::Failed | JobState::Cancelled
+                                )
+                            })
+                            .unwrap_or(false);
+                        if finished || stable_polls >= 10 {
+                            break;
+                        }
+                    }
                 }
             } else {
                 let path = gpumesh_common::agent_log_path();
@@ -462,11 +503,7 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
             }
             Ok(())
         }
-        Commands::Exec {
-            peer,
-            shell,
-            image,
-        } => {
+        Commands::Exec { peer, shell, image } => {
             ui::warn("exec runs an isolated container shell (not host SSH)");
             let mut node = MeshNode::bootstrap().await?;
             node.start_network().await?;
@@ -477,6 +514,8 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
                 vec![shell],
                 PathBuf::from("."),
                 Vec::new(),
+                None,
+                None,
             )
             .await?;
             if code != 0 {
@@ -506,7 +545,10 @@ async fn config_cmd(action: Option<ConfigAction>) -> Result<()> {
             let cfg = StateStore::load_config()?;
             let text = toml::to_string_pretty(&cfg)?;
             print!("{text}");
-            ui::dim(format!("\nPath: {}", gpumesh_common::config_path().display()));
+            ui::dim(format!(
+                "\nPath: {}",
+                gpumesh_common::config_path().display()
+            ));
             Ok(())
         }
         ConfigAction::Get { key } => {
@@ -599,6 +641,14 @@ async fn run_agent(
         .await
         .context("run `gpumesh init` first")?;
     node.start_network().await?;
+    if let Some(parent) = gpumesh_common::share_pid_path().parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let _ = std::fs::remove_file(gpumesh_common::share_stop_path());
+    std::fs::write(
+        gpumesh_common::share_pid_path(),
+        format!("{}\n", std::process::id()),
+    )?;
     if share {
         if public {
             let cfg = node.config.read().await.clone();
@@ -652,6 +702,19 @@ async fn run_agent(
     loop {
         tokio::select! {
             _ = tick.tick() => {
+                let stop_requested = gpumesh_common::share_stop_path().exists();
+                let sharing_disabled = share
+                    && StateStore::load_config()
+                        .map(|cfg| !cfg.sharing_enabled)
+                        .unwrap_or(false);
+                if stop_requested || sharing_disabled {
+                    if let Err(e) = node.disable_share().await {
+                        tracing::warn!("failed to disable sharing cleanly: {e}");
+                    }
+                    let _ = std::fs::remove_file(gpumesh_common::share_pid_path());
+                    let _ = std::fs::remove_file(gpumesh_common::share_stop_path());
+                    return Ok(());
+                }
                 if public {
                     if let Err(e) = node.publish_public_listing().await {
                         tracing::warn!("public heartbeat failed: {e}");
@@ -705,16 +768,12 @@ async fn search_public(
     };
     let client = gpumesh_network::RendezvousClient::new(base);
     let started = std::time::Instant::now();
-    let mut listings = client.public_search(&q).await?;
+    let listings = client.public_search(&q).await?;
     let rtt = started.elapsed().as_millis() as u32;
-    for l in &mut listings {
-        if l.latency_ms.is_none() {
-            l.latency_ms = Some(rtt);
-        }
-    }
 
     if json_out {
         println!("{}", serde_json::to_string_pretty(&listings)?);
+        eprintln!("registry_rtt_ms={rtt}");
         return Ok(());
     }
 
@@ -775,6 +834,7 @@ async fn search_public(
             &l.node_id[..l.node_id.len().min(16)]
         ));
     }
+    ui::dim(format!("registry_rtt_ms={rtt}"));
     ui::dim("Public search is metadata only — pairing is still required to run jobs.");
     Ok(())
 }
@@ -884,7 +944,11 @@ async fn sync_to_control_plane() -> Result<()> {
     let url = format!("{}/v1/sync", base.trim_end_matches('/'));
     let spinner = ui::spinner(&format!("Syncing to {url}…"));
     let client = reqwest::Client::new();
-    let resp = client.post(&url).json(&payload).send().await;
+    let mut request = client.post(&url).json(&payload);
+    if let Some(token) = gpumesh_common::api_token() {
+        request = request.bearer_auth(token);
+    }
+    let resp = request.send().await;
     spinner.finish_and_clear();
     match resp {
         Ok(r) if r.status().is_success() => {

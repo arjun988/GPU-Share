@@ -25,8 +25,12 @@ pub enum NetworkEvent {
 
 impl NetworkEndpoint {
     pub async fn bind(identity: Arc<NodeIdentity>, port: u16) -> Result<Self> {
-        let _ = rustls::crypto::ring::default_provider().install_default();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
+        Self::bind_addr(identity, addr).await
+    }
+
+    pub async fn bind_addr(identity: Arc<NodeIdentity>, addr: SocketAddr) -> Result<Self> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let (server_config, _cert) = make_server_config(&identity)?;
         let mut endpoint = Endpoint::server(server_config, addr)
             .map_err(|e| GpuMeshError::Network(e.to_string()))?;

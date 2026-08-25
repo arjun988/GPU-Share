@@ -51,7 +51,11 @@ pub fn section(title: impl AsRef<str>) {
 }
 
 pub fn kv(key: &str, value: impl AsRef<str>) {
-    println!("  {:<14} {}", format!("{key}:").bright_black(), value.as_ref());
+    println!(
+        "  {:<14} {}",
+        format!("{key}:").bright_black(),
+        value.as_ref()
+    );
 }
 
 pub fn check_line(name: &str, passed: bool, detail: &str) {

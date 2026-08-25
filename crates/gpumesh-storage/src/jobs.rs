@@ -46,8 +46,8 @@ impl JobRecord {
     pub fn save(&self) -> Result<()> {
         let dir = jobs_dir().join(&self.job_id);
         fs::create_dir_all(&dir)?;
-        let data = serde_json::to_string_pretty(self)
-            .map_err(|e| GpuMeshError::Storage(e.to_string()))?;
+        let data =
+            serde_json::to_string_pretty(self).map_err(|e| GpuMeshError::Storage(e.to_string()))?;
         fs::write(Self::path(&self.job_id), data)?;
         Ok(())
     }

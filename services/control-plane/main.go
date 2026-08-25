@@ -100,24 +100,24 @@ type SyncPayload struct {
 }
 
 type Overview struct {
-	GPUsOnline     int    `json:"gpus_online"`
-	GPUsAvailable  int    `json:"gpus_available"`
-	RunningJobs    int    `json:"running_jobs"`
-	TotalVRAMGB    uint64 `json:"total_vram_gb"`
-	Peers          int    `json:"peers"`
-	Groups         int    `json:"groups"`
-	Nodes          int    `json:"nodes"`
-	UpdatedAt      string `json:"updated_at"`
+	GPUsOnline    int    `json:"gpus_online"`
+	GPUsAvailable int    `json:"gpus_available"`
+	RunningJobs   int    `json:"running_jobs"`
+	TotalVRAMGB   uint64 `json:"total_vram_gb"`
+	Peers         int    `json:"peers"`
+	Groups        int    `json:"groups"`
+	Nodes         int    `json:"nodes"`
+	UpdatedAt     string `json:"updated_at"`
 }
 
 type store struct {
-	mu      sync.RWMutex
-	peers   map[string]peerEntry
-	gpus    []GPUInfo
-	jobs    []JobInfo
-	groups  []GroupInfo
-	nodes   map[string]Announce
-	public  map[string]publicEntry
+	mu     sync.RWMutex
+	peers  map[string]peerEntry
+	gpus   []GPUInfo
+	jobs   []JobInfo
+	groups []GroupInfo
+	nodes  map[string]Announce
+	public map[string]publicEntry
 }
 
 type peerEntry struct {
@@ -145,16 +145,25 @@ func main() {
 	// CORS wrapper
 	withCORS := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			origin := os.Getenv("GPUMESH_CORS_ORIGIN")
-			if origin == "" {
-				origin = "*"
+			origin := r.Header.Get("Origin")
+			switch origin {
+			case "http://127.0.0.1:3000", "http://localhost:3000", "http://127.0.0.1:3001":
+				w.Header().Set("Access-Control-Allow-Origin", origin)
 			}
-			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return
+			}
+			if token := os.Getenv("GPUMESH_API_TOKEN"); token != "" && r.Method == http.MethodPost {
+				protected := r.URL.Path == "/v1/announce" ||
+					r.URL.Path == "/v1/sync" ||
+					strings.HasPrefix(r.URL.Path, "/v1/public/")
+				if protected && r.Header.Get("Authorization") != "Bearer "+token {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
 			}
 			h(w, r)
 		}

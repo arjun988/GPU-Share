@@ -7,7 +7,8 @@ use std::path::Path;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use gpumesh_common::{identity_path, GpuMeshError, Result};
+use gpumesh_common::{identity_path, GpuMeshError, Result, HELLO_TTL_SECS, PAIRING_TTL_SECS};
+use gpumesh_protocol::ProtocolHello;
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -58,8 +59,8 @@ impl NodeIdentity {
         let data = fs::read_to_string(path).map_err(|e| GpuMeshError::Identity(e.to_string()))?;
         let file: IdentityFile =
             serde_json::from_str(&data).map_err(|e| GpuMeshError::Identity(e.to_string()))?;
-        let bytes = hex::decode(&file.secret_key_hex)
-            .map_err(|e| GpuMeshError::Identity(e.to_string()))?;
+        let bytes =
+            hex::decode(&file.secret_key_hex).map_err(|e| GpuMeshError::Identity(e.to_string()))?;
         if bytes.len() != 32 {
             return Err(GpuMeshError::Identity("invalid secret key length".into()));
         }
@@ -194,12 +195,22 @@ impl PairingPayload {
         if expected != self.node_id {
             return Err(GpuMeshError::Identity("pairing node_id mismatch".into()));
         }
+        let now = chrono_now();
+        if self.issued_at <= 0 || now - self.issued_at > PAIRING_TTL_SECS {
+            return Err(GpuMeshError::Identity(format!(
+                "pairing code expired (valid {PAIRING_TTL_SECS}s)"
+            )));
+        }
+        if self.issued_at > now + 60 {
+            return Err(GpuMeshError::Identity(
+                "pairing code timestamp is in the future".into(),
+            ));
+        }
         Ok(())
     }
 
     pub fn encode_code(&self) -> Result<String> {
-        let json =
-            serde_json::to_vec(self).map_err(|e| GpuMeshError::Identity(e.to_string()))?;
+        let json = serde_json::to_vec(self).map_err(|e| GpuMeshError::Identity(e.to_string()))?;
         Ok(URL_SAFE_NO_PAD.encode(json))
     }
 
@@ -219,6 +230,106 @@ fn canonical_pairing_bytes(p: &PairingPayload) -> Vec<u8> {
     let mut clone = p.clone();
     clone.signature.clear();
     serde_json::to_vec(&clone).unwrap_or_default()
+}
+
+fn chrono_now() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Sign a ProtocolHello in place.
+pub fn sign_hello(identity: &NodeIdentity, hello: &mut ProtocolHello) {
+    hello.issued_at = chrono_now();
+    hello.signature.clear();
+    let msg = hello.canonical_bytes();
+    hello.signature = identity.sign_b64(&msg);
+}
+
+/// Verify Hello signature, node_id↔key binding, and freshness.
+pub fn verify_hello(hello: &ProtocolHello) -> Result<()> {
+    if hello.signature.is_empty() {
+        return Err(GpuMeshError::Identity("hello missing signature".into()));
+    }
+    let now = chrono_now();
+    if hello.issued_at <= 0 || now - hello.issued_at > HELLO_TTL_SECS {
+        return Err(GpuMeshError::Identity(
+            "hello expired or missing timestamp".into(),
+        ));
+    }
+    if hello.issued_at > now + 60 {
+        return Err(GpuMeshError::Identity(
+            "hello timestamp in the future".into(),
+        ));
+    }
+    verify_signature(
+        &hello.public_key_hex,
+        &hello.canonical_bytes(),
+        &hello.signature,
+    )?;
+    let expected = node_id_from_public_hex(&hello.public_key_hex)?;
+    if expected != hello.node_id {
+        return Err(GpuMeshError::Identity(
+            "hello node_id does not match public key".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Sign arbitrary UTF-8/JSON payload bytes.
+pub fn sign_payload(identity: &NodeIdentity, payload_without_sig: &[u8]) -> String {
+    identity.sign_b64(payload_without_sig)
+}
+
+/// Minimal interface implemented by the network crate's public listing type.
+/// Keeping the interface here avoids a security↔network dependency cycle.
+pub trait PublicListingPayload {
+    fn node_id(&self) -> &str;
+    fn public_key_hex(&self) -> &str;
+    fn issued_at(&self) -> i64;
+    fn set_issued_at(&mut self, value: i64);
+    fn signature(&self) -> &str;
+    fn set_signature(&mut self, value: String);
+    fn canonical_bytes(&self) -> Vec<u8>;
+}
+
+pub fn sign_public_listing(identity: &NodeIdentity, listing: &mut impl PublicListingPayload) {
+    listing.set_issued_at(chrono_now());
+    listing.set_signature(String::new());
+    let signature = identity.sign_b64(&listing.canonical_bytes());
+    listing.set_signature(signature);
+}
+
+pub fn verify_public_listing(listing: &impl PublicListingPayload) -> Result<()> {
+    if listing.signature().is_empty() {
+        return Err(GpuMeshError::Identity(
+            "public listing missing signature".into(),
+        ));
+    }
+    let now = chrono_now();
+    if listing.issued_at() <= 0 || now - listing.issued_at() > gpumesh_common::ANNOUNCE_TTL_SECS {
+        return Err(GpuMeshError::Identity(
+            "public listing expired or missing timestamp".into(),
+        ));
+    }
+    if listing.issued_at() > now + 60 {
+        return Err(GpuMeshError::Identity(
+            "public listing timestamp is in the future".into(),
+        ));
+    }
+    verify_signature(
+        listing.public_key_hex(),
+        &listing.canonical_bytes(),
+        listing.signature(),
+    )?;
+    if node_id_from_public_hex(listing.public_key_hex())? != listing.node_id() {
+        return Err(GpuMeshError::Identity(
+            "public listing node_id does not match public key".into(),
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -256,5 +367,42 @@ pub fn short_fingerprint(node_id: &str) -> String {
         node_id.to_string()
     } else {
         format!("{}…", &node_id[..8])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verifies_valid_signature() {
+        let identity = NodeIdentity::from_seed([7; 32]);
+        let message = b"signed gpumesh hello";
+
+        assert!(verify_signature(
+            &identity.public_key_hex(),
+            message,
+            &identity.sign_b64(message)
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn rejects_signature_for_modified_message() {
+        let identity = NodeIdentity::from_seed([9; 32]);
+        let signature = identity.sign_b64(b"original");
+
+        assert!(verify_signature(&identity.public_key_hex(), b"modified", &signature).is_err());
+    }
+
+    #[test]
+    fn derives_node_id_from_public_key() {
+        let identity = NodeIdentity::from_seed([11; 32]);
+
+        assert_eq!(
+            node_id_from_public_hex(&identity.public_key_hex()).unwrap(),
+            identity.node_id
+        );
+        assert!(node_id_from_public_hex("abcd").is_err());
     }
 }
