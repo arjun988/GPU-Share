@@ -210,27 +210,56 @@ async fn upload_file(
     }))
     .await?;
 
+    // Phase 4: wait for resume handshake before sending chunks.
+    let mut start = 0u64;
+    match conn.recv().await? {
+        Some(Message::FileAck {
+            ok: true,
+            resume_from,
+            ..
+        }) => {
+            start = resume_from.unwrap_or(0).min(data.len() as u64);
+            if start > 0 {
+                tracing::info!("resuming upload of {remote_path} from byte {start}");
+            }
+        }
+        Some(Message::FileAck {
+            ok: false, error, ..
+        }) => {
+            return Err(GpuMeshError::Storage(
+                error.unwrap_or_else(|| "upload rejected".into()),
+            ));
+        }
+        other => {
+            return Err(GpuMeshError::Protocol(format!(
+                "expected FileAck after offer, got {other:?}"
+            )));
+        }
+    }
+
     const CHUNK: usize = 256 * 1024;
-    let mut offset = 0u64;
-    for chunk in data.chunks(CHUNK) {
-        let eof = offset + chunk.len() as u64 >= data.len() as u64;
+    let mut offset = start;
+    let slice = &data[start as usize..];
+    if slice.is_empty() {
         conn.send(Message::FileChunk(FileChunk {
             transfer_id: transfer_id.to_string(),
             offset,
-            data: chunk.to_vec(),
-            eof,
-        }))
-        .await?;
-        offset += chunk.len() as u64;
-    }
-    if data.is_empty() {
-        conn.send(Message::FileChunk(FileChunk {
-            transfer_id: transfer_id.to_string(),
-            offset: 0,
             data: Vec::new(),
             eof: true,
         }))
         .await?;
+    } else {
+        for chunk in slice.chunks(CHUNK) {
+            let eof = offset + chunk.len() as u64 >= data.len() as u64;
+            conn.send(Message::FileChunk(FileChunk {
+                transfer_id: transfer_id.to_string(),
+                offset,
+                data: chunk.to_vec(),
+                eof,
+            }))
+            .await?;
+            offset += chunk.len() as u64;
+        }
     }
 
     match conn.recv().await? {
@@ -270,40 +299,73 @@ pub async fn serve_peer_session(node: &MeshNode, conn: PeerConnection) -> Result
             }
             Message::FileOffer(offer) => match offer.direction {
                 FileDirection::Upload => {
-                    uploads.insert(offer.transfer_id.clone(), (offer.path.clone(), Vec::new()));
+                    let dest = upload_dest(&offer.path, &offer.transfer_id)?;
+                    let partial = PathBuf::from(format!("{}.partial", dest.display()));
+                    let mut resume_from = 0u64;
+                    let mut buf = Vec::new();
+                    if partial.exists() {
+                        if let Ok(existing) = std::fs::read(&partial) {
+                            if (existing.len() as u64) < offer.size {
+                                resume_from = existing.len() as u64;
+                                buf = existing;
+                            }
+                        }
+                    }
+                    uploads.insert(offer.transfer_id.clone(), (offer.path.clone(), buf));
+                    conn.send(Message::FileAck {
+                        transfer_id: offer.transfer_id,
+                        ok: true,
+                        error: None,
+                        resume_from: Some(resume_from),
+                    })
+                    .await?;
                 }
                 FileDirection::Download => {
                     serve_download(&conn, &offer.path, &offer.transfer_id).await?;
                 }
             },
             Message::FileChunk(chunk) => {
-                if let Some((_path, buf)) = uploads.get_mut(&chunk.transfer_id) {
-                    if chunk.offset as usize != buf.len() {
-                        // allow sparse-ish append for sequential MVP
+                let tid = chunk.transfer_id.clone();
+                let (path_clone, snapshot, eof) = {
+                    let Some((path, buf)) = uploads.get_mut(&tid) else {
+                        continue;
+                    };
+                    if chunk.offset as usize > buf.len() {
+                        buf.resize(chunk.offset as usize, 0);
                     }
-                    buf.extend_from_slice(&chunk.data);
-                    if chunk.eof {
-                        let (path, data) = uploads.remove(&chunk.transfer_id).unwrap();
-                        let dest = if path == "workload.gpk" {
-                            let dir = StateStore::ensure_job_dir(&chunk.transfer_id)?;
-                            dir.join("workload.gpk")
-                        } else {
-                            let base = gpumesh_common::work_dir().join("incoming");
-                            std::fs::create_dir_all(&base)?;
-                            let clean = path.trim_start_matches('/').replace("..", "_");
-                            base.join(clean)
-                        };
-                        if let Some(parent) = dest.parent() {
-                            std::fs::create_dir_all(parent)?;
-                        }
-                        std::fs::write(&dest, &data)?;
-                        conn.send(Message::FileAck {
-                            transfer_id: chunk.transfer_id,
-                            ok: true,
-                            error: None,
-                        })
-                        .await?;
+                    if chunk.offset as usize == buf.len() {
+                        buf.extend_from_slice(&chunk.data);
+                    } else if chunk.offset as usize + chunk.data.len() <= buf.len() {
+                        let start = chunk.offset as usize;
+                        buf[start..start + chunk.data.len()].copy_from_slice(&chunk.data);
+                    } else {
+                        buf.truncate(chunk.offset as usize);
+                        buf.extend_from_slice(&chunk.data);
                     }
+                    (path.clone(), buf.clone(), chunk.eof)
+                };
+                if let Ok(dest) = upload_dest(&path_clone, &tid) {
+                    if let Some(parent) = dest.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let partial = PathBuf::from(format!("{}.partial", dest.display()));
+                    let _ = std::fs::write(&partial, &snapshot);
+                }
+                if eof {
+                    let (path, data) = uploads.remove(&tid).unwrap();
+                    let dest = upload_dest(&path, &tid)?;
+                    if let Some(parent) = dest.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&dest, &data)?;
+                    let _ = std::fs::remove_file(format!("{}.partial", dest.display()));
+                    conn.send(Message::FileAck {
+                        transfer_id: tid,
+                        ok: true,
+                        error: None,
+                        resume_from: None,
+                    })
+                    .await?;
                 }
             }
             Message::RunJob(req) => {
@@ -342,6 +404,18 @@ pub async fn serve_peer_session(node: &MeshNode, conn: PeerConnection) -> Result
     Ok(())
 }
 
+fn upload_dest(path: &str, transfer_id: &str) -> Result<PathBuf> {
+    if path == "workload.gpk" {
+        let dir = StateStore::ensure_job_dir(transfer_id)?;
+        Ok(dir.join("workload.gpk"))
+    } else {
+        let base = gpumesh_common::work_dir().join("incoming");
+        std::fs::create_dir_all(&base)?;
+        let clean = path.trim_start_matches('/').replace("..", "_");
+        Ok(base.join(clean))
+    }
+}
+
 async fn serve_download(conn: &PeerConnection, path: &str, transfer_id: &str) -> Result<()> {
     let base = gpumesh_common::work_dir().join("incoming");
     let clean = path.trim_start_matches('/').replace("..", "_");
@@ -354,6 +428,7 @@ async fn serve_download(conn: &PeerConnection, path: &str, transfer_id: &str) ->
                 transfer_id: transfer_id.to_string(),
                 ok: false,
                 error: Some(format!("file not found: {path}")),
+                resume_from: None,
             })
             .await?;
             return Ok(());

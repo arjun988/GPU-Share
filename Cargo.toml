@@ -43,7 +43,11 @@ futures = "0.3"
 bytes = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "4", features = ["derive", "env"] }
+clap = { version = "4", features = ["derive", "env", "wrap_help", "string"] }
+clap_complete = "4"
+serde_yaml = "0.9"
+owo-colors = "4"
+indicatif = "0.17"
 ed25519-dalek = { version = "2", features = ["rand_core", "serde"] }
 rand = "0.8"
 hex = "0.4"
@@ -61,7 +65,6 @@ rcgen = "0.13"
 rustls-pemfile = "2"
 hostname = "0.4"
 bytesize = "1"
-indicatif = "0.17"
 tabled = "0.17"
 nvml-wrapper = "0.10"
 bollard = "0.18"

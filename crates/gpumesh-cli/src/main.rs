@@ -1,6 +1,10 @@
-//! GPUMesh CLI — Phases 0–3 surface.
+//! GPUMesh CLI — Claude/Gemini-style developer experience (Phases 0–4).
 
 mod commands;
+mod doctor;
+mod jobfile;
+mod ui;
+mod update;
 
 use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
@@ -8,26 +12,38 @@ use tracing_subscriber::EnvFilter;
 #[derive(Debug, Parser)]
 #[command(
     name = "gpumesh",
-    about = "GPUMesh — P2P GPU sharing for developers",
-    version
+    author = "GPUMesh",
+    version,
+    about = "GPUMesh — turn idle GPUs into a personal compute network",
+    long_about = "GPUMesh is a CLI-first P2P GPU sharing tool.\n\
+Share your idle NVIDIA GPU with trusted peers, or run workloads on theirs —\n\
+no SSH, VPN, or port forwarding required.",
+    after_help = ui::AFTER_HELP,
+    styles = ui::styles(),
+    propagate_version = true,
+    arg_required_else_help = true,
+    disable_help_subcommand = false
 )]
-struct Cli {
+pub(crate) struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum Commands {
-    /// Create local identity and config (~/.gpumesh)
+    /// Create local identity and config
     Init {
-        #[arg(long)]
+        /// Node display name
+        #[arg(long, env = "GPUMESH_NODE_NAME")]
         name: Option<String>,
     },
     /// Show node, GPU, and network status
     Status,
     /// Show detailed GPU inventory
     Gpu,
-    /// Share this node's GPU (starts agent accept loop)
+    /// Diagnose local setup (Docker, NVIDIA, identity, network)
+    Doctor,
+    /// Share this node's GPU (starts accept loop)
     Share {
         #[arg(long)]
         max_vram: Option<String>,
@@ -50,26 +66,60 @@ pub(crate) enum Commands {
     Deny { peer: String },
     /// Run a command locally or on a peer GPU
     Run {
-        #[arg(long)]
+        #[arg(long, env = "GPUMESH_PEER")]
         peer: Option<String>,
-        #[arg(long)]
+        #[arg(long, env = "GPUMESH_IMAGE")]
         image: Option<String>,
         #[arg(long, value_parser = parse_env)]
         env: Vec<(String, String)>,
         #[arg(long, default_value = ".")]
         workdir: String,
-        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        /// YAML job definition (Phase 4)
+        #[arg(long, short = 'f')]
+        file: Option<String>,
+        /// Retry failed runs N times
+        #[arg(long, default_value_t = 0)]
+        retries: u32,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,
     },
-    /// Copy files to/from a peer (`local peer:/path` or `peer:/path local`)
-    Cp { src: String, dst: String },
+    /// List recent jobs
+    Jobs {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Show logs for a job or the agent
+    Logs {
+        /// Job id (omit for agent log)
+        job_id: Option<String>,
+        #[arg(long, short = 'f')]
+        follow: bool,
+    },
     /// Cancel a running job on a peer
     Cancel {
-        #[arg(long)]
-        peer: String,
+        #[arg(long, env = "GPUMESH_PEER")]
+        peer: Option<String>,
         job_id: String,
     },
-    /// Isolated workload shell on a peer (containerized — not host SSH)
+    /// Get or set configuration
+    Config {
+        #[command(subcommand)]
+        action: Option<ConfigAction>,
+    },
+    /// Check for / apply CLI updates
+    Update {
+        /// Only check, do not download
+        #[arg(long)]
+        check: bool,
+    },
+    /// Generate shell completions
+    Completion {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+    /// Copy files to/from a peer
+    Cp { src: String, dst: String },
+    /// Isolated workload shell on a peer (not host SSH)
     Exec {
         peer: String,
         #[arg(default_value = "bash")]
@@ -94,6 +144,18 @@ pub(crate) enum ShareAction {
     Stop,
 }
 
+#[derive(Debug, Subcommand)]
+pub(crate) enum ConfigAction {
+    /// Print full config
+    Show,
+    /// Get a single key
+    Get { key: String },
+    /// Set a key
+    Set { key: String, value: String },
+    /// Print config path
+    Path,
+}
+
 fn parse_env(s: &str) -> Result<(String, String), String> {
     let (k, v) = s
         .split_once('=')
@@ -104,16 +166,17 @@ fn parse_env(s: &str) -> Result<(String, String), String> {
 #[tokio::main]
 async fn main() {
     let _ = rustls::crypto::ring::default_provider().install_default();
+    let filter = std::env::var("GPUMESH_LOG")
+        .or_else(|_| std::env::var("RUST_LOG"))
+        .unwrap_or_else(|_| "warn".into());
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::from_default_env().add_directive("warn".parse().unwrap()),
-        )
+        .with_env_filter(EnvFilter::new(filter))
         .with_writer(std::io::stderr)
         .init();
 
     let cli = Cli::parse();
     if let Err(e) = commands::dispatch(cli.command).await {
-        eprintln!("error: {e}");
+        ui::err(e.to_string());
         std::process::exit(1);
     }
 }

@@ -84,6 +84,9 @@ pub enum Message {
         transfer_id: String,
         ok: bool,
         error: Option<String>,
+        /// If set after FileOffer, sender should resume uploading from this byte offset.
+        #[serde(default)]
+        resume_from: Option<u64>,
     },
     ExecRequest(ExecRequest),
     ExecOutput {

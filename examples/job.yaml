@@ -1,0 +1,14 @@
+# Example GPUMesh job definition (Phase 4)
+# Usage: gpumesh run --file examples/job.yaml
+
+name: hello-remote
+peer: alice
+image: python:3.12-slim
+workdir: .
+retries: 1
+env:
+  - GPUMESH_DEMO=1
+command:
+  - python
+  - -c
+  - print("hello from job.yaml")

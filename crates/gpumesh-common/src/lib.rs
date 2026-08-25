@@ -61,8 +61,21 @@ impl From<anyhow::Error> for GpuMeshError {
     }
 }
 
-/// Resolve `~/.gpumesh` (or `%USERPROFILE%\.gpumesh` on Windows).
+/// Resolve config root.
+/// Override with `GPUMESH_HOME` (full path to the `.gpumesh` directory or a parent
+/// that should contain it — if the env value ends with `.gpumesh` it is used as-is).
 pub fn config_dir() -> PathBuf {
+    if let Ok(home) = std::env::var("GPUMESH_HOME") {
+        let p = PathBuf::from(home);
+        if p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n == APP_DIR_NAME)
+        {
+            return p;
+        }
+        return p.join(APP_DIR_NAME);
+    }
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(APP_DIR_NAME)
@@ -93,6 +106,7 @@ pub fn work_dir() -> PathBuf {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct NodeConfig {
     pub node_name: String,
     pub listen_port: u16,
@@ -106,6 +120,10 @@ pub struct NodeConfig {
     pub max_ram_mb: Option<u64>,
     pub max_disk_mb: Option<u64>,
     pub sharing_enabled: bool,
+    /// Default job retries for remote runs (Phase 4).
+    pub default_retries: u32,
+    /// Update check URL (JSON with `version` + `url` fields).
+    pub update_url: Option<String>,
 }
 
 impl Default for NodeConfig {
@@ -127,8 +145,23 @@ impl Default for NodeConfig {
             max_ram_mb: None,
             max_disk_mb: None,
             sharing_enabled: false,
+            default_retries: 0,
+            update_url: Some(
+                "https://raw.githubusercontent.com/gpumesh/gpumesh/main/dist/latest.json"
+                    .into(),
+            ),
         }
     }
+}
+
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub fn logs_dir() -> PathBuf {
+    config_dir().join("logs")
+}
+
+pub fn agent_log_path() -> PathBuf {
+    logs_dir().join("agent.log")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

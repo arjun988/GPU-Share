@@ -2,95 +2,81 @@
 
 **Turn idle GPUs into a personal compute network.**
 
-Open-source, CLI-first P2P GPU compute for trusted peers. Share an idle NVIDIA GPU; run workloads on a friend’s machine without SSH, VPN, or manual port forwarding.
+```bash
+gpumesh init
+gpumesh share
+gpumesh pair <code>
+gpumesh run --peer alice python train.py
+```
 
-> Product requirements: see [`PRD.md`](./PRD.md). This tree implements **Phases 0–3**.
+Open-source, CLI-first P2P GPU compute for trusted peers. Phases **0–4** implemented.
 
-## Status (Phases 0–3)
+## Install
 
-| Phase | Scope | Status |
-| --- | --- | --- |
-| 0 | Architecture spikes (GPU, Docker, QUIC, transfer, logs) | Implemented in crates |
-| 1 | Local agent: `status`, `gpu`, `share`, local `run` | Implemented |
-| 2 | Identity, pairing, allow/deny, P2P QUIC, relay fallback | Implemented |
-| 3 | Remote `run --peer`, packaging, logs, `cp`, cancel | Implemented |
+```bash
+# from this repo
+GPUMESH_FROM_SOURCE=1 ./scripts/install.sh
+
+# or
+cargo install --path crates/gpumesh-cli
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
+Shell completions:
+
+```bash
+source <(gpumesh completion bash)   # or zsh / fish / powershell
+```
 
 ## Quick start
 
 ```bash
-# Provider
 gpumesh init --name alice-pc
+gpumesh doctor
 gpumesh share
 
-# Consumer (other machine)
-gpumesh init --name bob-laptop
-gpumesh pair '<code-from-alice>'
-gpumesh run --peer alice-pc --image nvidia/cuda:12.8.0-runtime-ubuntu22.04 nvidia-smi
+# other machine / other GPUMESH_HOME
+gpumesh init --name bob
+gpumesh pair '<code>'
+gpumesh run --peer alice-pc --image python:3.12-slim echo hello
 ```
 
-## Workspace layout
-
-```text
-crates/
-  gpumesh-cli/        # `gpumesh` binary
-  gpumesh-agent/      # provider daemon
-  gpumesh-core/       # orchestration
-  gpumesh-network/    # QUIC P2P, mDNS, relay, rendezvous client
-  gpumesh-protocol/   # framed messages
-  gpumesh-runtime/    # Docker + NVIDIA GPU jobs
-  gpumesh-gpu/        # NVML / nvidia-smi
-  gpumesh-security/   # Ed25519 identity + pairing
-  gpumesh-storage/    # ~/.gpumesh state + packaging
-  gpumesh-common/     # shared types
-services/control-plane/  # optional HTTP rendezvous (Go)
-docs/
-examples/
-```
-
-## CLI (MVP)
+YAML jobs:
 
 ```bash
-gpumesh init
-gpumesh status
-gpumesh gpu
-gpumesh share [--max-vram 16GB] [--max-gpu-utilization 80]
-gpumesh share stop
-gpumesh pair-code
-gpumesh pair <code>
-gpumesh peers
-gpumesh connect <peer>
-gpumesh allow <peer>
-gpumesh deny <peer>
-gpumesh run [--peer NAME] [--image IMG] [--env K=V] [--workdir DIR] <cmd...>
-gpumesh cp <local> <peer>:/path
-gpumesh cp <peer>:/path <local>
-gpumesh cancel --peer NAME <job-id>
-gpumesh exec <peer> [shell]
-gpumesh agent --share
+gpumesh run --file examples/job.yaml
 ```
 
-Config lives in `~/.gpumesh/` (identity, config.toml, peers, allowlist, jobs).
+## CLI
 
-## Security model
+| Command | Description |
+| --- | --- |
+| `init` / `status` / `gpu` / `doctor` | Setup & diagnostics |
+| `share` / `pair` / `peers` / `connect` | Private P2P network |
+| `run` / `jobs` / `logs` / `cancel` | Jobs |
+| `cp` / `exec` | Files & isolated shell |
+| `config` / `update` / `completion` | DX (Phase 4) |
+
+Environment: `GPUMESH_HOME`, `GPUMESH_PEER`, `GPUMESH_IMAGE`, `GPUMESH_LOG`.
+
+## Layout
 
 ```text
-Remote user → authenticated P2P → job sandbox → Docker container → GPU
+crates/gpumesh-cli/     # polished `gpumesh` binary
+crates/gpumesh-agent/   # provider daemon
+crates/gpumesh-*        # core protocol/runtime/network
+services/control-plane/ # optional rendezvous
+scripts/install.sh
+docs/
 ```
-
-Remote peers never receive an unrestricted host shell.
-
-## Stack
-
-- **Rust** + Tokio + Quinn (QUIC) + Ed25519
-- **Docker** + NVIDIA Container Toolkit + NVML
-- **Go** optional rendezvous (`services/control-plane`)
 
 ## Docs
 
 - [PRD](./PRD.md)
-- [Phase 0 spikes](./docs/phase0-spikes.md)
+- [Phase 4 DX](./docs/phase4-dx.md)
 - [Two-machine demo](./docs/two-machine-demo.md)
+- [Completions](./docs/completions.md)
 
 ## License
 
-Apache-2.0 recommended (see PRD). Current repo license file may differ until aligned.
+Apache-2.0 recommended (see PRD).

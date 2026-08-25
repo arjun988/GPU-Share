@@ -1,71 +1,76 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use gpumesh_common::PeerStatus;
+use chrono::Utc;
+use clap::CommandFactory;
+use gpumesh_common::{JobState, PeerStatus};
 use gpumesh_core::{
     collect_status, format_peers_table, format_status, run_local_job, run_remote_job,
     transfer_file_from_peer, transfer_file_to_peer, MeshNode,
 };
 use gpumesh_protocol::Message;
 use gpumesh_security::short_fingerprint;
+use gpumesh_storage::{JobRecord, StateStore};
 use tracing::error;
 
-use crate::{Commands, ShareAction};
+use crate::jobfile::JobFile;
+use crate::ui;
+use crate::{Commands, ConfigAction, ShareAction};
 
 pub async fn dispatch(cmd: Commands) -> Result<()> {
     match cmd {
         Commands::Init { name } => {
+            ui::print_banner();
             let (id, cfg) = MeshNode::init(name)?;
-            println!("Initialized GPUMesh node");
-            println!("  Name:    {}", cfg.node_name);
-            println!("  Node ID: {}", id.node_id);
-            println!("  Config:  {}", gpumesh_common::config_dir().display());
+            ui::ok("Initialized GPUMesh node");
+            ui::kv("Name", &cfg.node_name);
+            ui::kv("Node ID", &id.node_id);
+            ui::kv("Config", gpumesh_common::config_dir().display().to_string());
+            ui::dim("Next: gpumesh doctor   then   gpumesh share");
             Ok(())
         }
         Commands::Status => {
-            let mut node = MeshNode::bootstrap().await?;
-            // status does not require listening; show whether share flag set
+            ui::print_banner();
+            let node = MeshNode::bootstrap().await?;
             let view = collect_status(&node).await;
             print!("{}", format_status(&view));
-            let _ = &mut node;
             Ok(())
         }
         Commands::Gpu => {
+            ui::print_banner();
             let gpus = MeshNode::detect_gpus()?;
             if gpus.is_empty() {
-                println!("No NVIDIA GPUs detected (NVML / nvidia-smi).");
+                ui::warn("No NVIDIA GPUs detected (NVML / nvidia-smi).");
                 return Ok(());
             }
             for g in gpus {
-                println!("[{}] {}", g.index, g.name);
-                println!(
-                    "  VRAM: {} / {} MB ({} free)",
-                    g.vram_used_mb, g.vram_total_mb, g.vram_free_mb
+                ui::section(&format!("[{}] {}", g.index, g.name));
+                ui::kv(
+                    "VRAM",
+                    format!(
+                        "{} / {} MB ({} free)",
+                        g.vram_used_mb, g.vram_total_mb, g.vram_free_mb
+                    ),
                 );
-                println!(
-                    "  Util: {}%  Temp: {}°C  Power: {}W",
-                    g.utilization_gpu.unwrap_or(0),
-                    g.temperature_c
-                        .map(|t| t.to_string())
-                        .unwrap_or_else(|| "-".into()),
-                    g.power_watts
-                        .map(|p| p.to_string())
-                        .unwrap_or_else(|| "-".into()),
+                ui::kv(
+                    "Util",
+                    format!("{}%", g.utilization_gpu.unwrap_or(0)),
                 );
+                if let Some(t) = g.temperature_c {
+                    ui::kv("Temp", format!("{t}°C"));
+                }
                 if let Some(d) = &g.driver_version {
-                    println!("  Driver: {d}");
+                    ui::kv("Driver", d);
                 }
                 if let Some(c) = &g.cuda_version {
-                    println!("  CUDA: {c}");
+                    ui::kv("CUDA", c);
                 }
-                if let Some(cc) = &g.compute_capability {
-                    println!("  Compute capability: {cc}");
-                }
-                println!();
             }
             Ok(())
         }
+        Commands::Doctor => crate::doctor::run().await,
         Commands::Share {
             max_vram,
             max_gpu_utilization,
@@ -74,51 +79,58 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
             Some(ShareAction::Stop) => {
                 let node = MeshNode::bootstrap().await?;
                 node.disable_share().await?;
-                println!("Sharing stopped.");
+                ui::ok("Sharing stopped.");
                 Ok(())
             }
             None => run_share_loop(max_vram, max_gpu_utilization).await,
         },
         Commands::PairCode => {
+            ui::print_banner();
             let mut node = MeshNode::bootstrap().await?;
             node.start_network().await?;
             let code = node.pairing_code().await?;
-            println!("Pairing code (share out-of-band):\n");
+            ui::ok("Pairing code (share out-of-band):");
+            println!();
             println!("{code}");
-            println!(
-                "\nPeer should run:\n  gpumesh pair <code>"
-            );
-            // Keep process alive briefly so addr is meaningful — print and exit is OK for code gen.
+            println!();
+            ui::dim("Peer runs:  gpumesh pair <code>");
             Ok(())
         }
         Commands::Pair { code } => {
+            ui::print_banner();
             let node = MeshNode::bootstrap().await?;
             let rec = node.pair_with_code(&code).await?;
-            println!("Pairing successful.\n");
-            println!("Peer:");
-            println!("{}", rec.node_name);
+            ui::ok("Pairing successful");
+            ui::kv("Peer", &rec.node_name);
             if let Some(g) = &rec.gpu_model {
-                println!("{g}");
+                ui::kv("GPU", g);
             }
             if let Some(v) = rec.vram_mb {
-                println!("{} GB VRAM", (v as f64 / 1024.0).round());
+                ui::kv("VRAM", format!("{} GB", (v as f64 / 1024.0).round()));
             }
-            println!("Node ID: {}", short_fingerprint(&rec.node_id));
+            ui::kv("Node ID", short_fingerprint(&rec.node_id));
+            ui::dim("Tip: provider should also `gpumesh pair` your code (mutual allow).");
             Ok(())
         }
         Commands::Peers => {
+            ui::print_banner();
             let mut node = MeshNode::bootstrap().await?;
             let _ = node.start_network().await;
             let store = node.peers.read().await;
             let list = store.list();
             let mut live = Vec::new();
             for p in &list {
-                let status = match try_probe(&node, &p.node_id).await {
-                    Ok((s, gpu, vram)) => {
+                let status = match tokio::time::timeout(
+                    Duration::from_secs(3),
+                    try_probe(&node, &p.node_id),
+                )
+                .await
+                {
+                    Ok(Ok((s, gpu, vram))) => {
                         live.push((p.node_id.clone(), s, gpu, vram));
                         continue;
                     }
-                    Err(_) => PeerStatus::Offline,
+                    _ => PeerStatus::Offline,
                 };
                 live.push((
                     p.node_id.clone(),
@@ -131,28 +143,31 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
             Ok(())
         }
         Commands::Connect { peer } => {
+            ui::print_banner();
+            let spinner = ui::spinner(&format!("Connecting to {peer}…"));
             let mut node = MeshNode::bootstrap().await?;
             node.start_network().await?;
             let conn = node.connect_peer(&peer).await?;
-            println!(
+            spinner.finish_and_clear();
+            ui::ok(format!(
                 "Connected to {} ({})",
                 conn.peer_name.as_deref().unwrap_or(&peer),
                 conn.remote_addr
-            );
-            println!("Mode: {:?}", conn.connection_mode);
+            ));
+            ui::kv("Mode", format!("{:?}", conn.connection_mode));
             conn.close();
             Ok(())
         }
         Commands::Allow { peer } => {
             let node = MeshNode::bootstrap().await?;
             node.allow_peer(&peer).await?;
-            println!("Allowed {peer}");
+            ui::ok(format!("Allowed {peer}"));
             Ok(())
         }
         Commands::Deny { peer } => {
             let node = MeshNode::bootstrap().await?;
             node.deny_peer(&peer).await?;
-            println!("Denied {peer}");
+            ui::ok(format!("Denied {peer}"));
             Ok(())
         }
         Commands::Run {
@@ -160,40 +175,186 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
             image,
             env,
             workdir,
+            file,
+            retries,
             command,
         } => {
-            if command.is_empty() {
-                bail!("command required");
+            let mut peer = peer;
+            let mut image = image;
+            let mut env = env;
+            let mut workdir = workdir;
+            let mut command = command;
+            let mut retries = retries;
+
+            if let Some(path) = file {
+                let job = JobFile::load(PathBuf::from(&path).as_path())?;
+                if peer.is_none() {
+                    peer = job.peer.clone();
+                }
+                if image.is_none() {
+                    image = job.image.clone();
+                }
+                if command.is_empty() {
+                    command = job.command.clone();
+                }
+                if workdir == "." {
+                    workdir = job.workdir.clone();
+                }
+                if env.is_empty() {
+                    env = job.env_pairs();
+                }
+                if retries == 0 && job.retries > 0 {
+                    retries = job.retries;
+                }
+                if let Some(name) = &job.name {
+                    ui::info(format!("Job file: {name}"));
+                }
             }
+
+            if command.is_empty() {
+                bail!("command required (or pass --file job.yaml)");
+            }
+
+            let cfg = StateStore::load_config().unwrap_or_default();
+            if retries == 0 {
+                retries = cfg.default_retries;
+            }
+
             let mut node = MeshNode::bootstrap().await?;
-            let workdir = PathBuf::from(workdir);
-            let code = if let Some(peer) = peer {
-                node.start_network().await?;
-                run_remote_job(&node, &peer, image, command, workdir, env).await?
-            } else {
-                run_local_job(&node, image, command, workdir, env).await?
-            };
-            if code != 0 {
-                std::process::exit(code);
+            let workdir_path = PathBuf::from(&workdir);
+            let mut last_err = None;
+            let attempts = retries + 1;
+            for attempt in 1..=attempts {
+                if attempt > 1 {
+                    ui::warn(format!("Retry {attempt}/{attempts}…"));
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+                let job_id_hint = gpumesh_protocol::short_job_id();
+                let mut rec = JobRecord::new(
+                    job_id_hint.clone(),
+                    peer.clone(),
+                    image.clone().unwrap_or_else(|| cfg.default_image.clone()),
+                    command.clone(),
+                );
+                rec.attempts = attempt;
+                rec.state = JobState::Running;
+                let _ = rec.save();
+
+                let result = if let Some(ref peer_name) = peer {
+                    node.start_network().await?;
+                    run_remote_job(
+                        &node,
+                        peer_name,
+                        image.clone(),
+                        command.clone(),
+                        workdir_path.clone(),
+                        env.clone(),
+                    )
+                    .await
+                } else {
+                    run_local_job(
+                        &node,
+                        image.clone(),
+                        command.clone(),
+                        workdir_path.clone(),
+                        env.clone(),
+                    )
+                    .await
+                };
+
+                match result {
+                    Ok(code) => {
+                        rec.state = if code == 0 {
+                            JobState::Succeeded
+                        } else {
+                            JobState::Failed
+                        };
+                        rec.exit_code = Some(code);
+                        rec.finished_at = Some(Utc::now());
+                        let _ = rec.save();
+                        if code != 0 {
+                            if attempt < attempts {
+                                last_err = Some(format!("exit code {code}"));
+                                continue;
+                            }
+                            std::process::exit(code);
+                        }
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        rec.state = JobState::Failed;
+                        rec.error = Some(e.to_string());
+                        rec.finished_at = Some(Utc::now());
+                        let _ = rec.save();
+                        last_err = Some(e.to_string());
+                        if attempt >= attempts {
+                            bail!("{}", last_err.unwrap());
+                        }
+                    }
+                }
+            }
+            bail!("{}", last_err.unwrap_or_else(|| "job failed".into()))
+        }
+        Commands::Jobs { limit } => {
+            ui::print_banner();
+            ui::section("Jobs");
+            let jobs = JobRecord::list()?;
+            if jobs.is_empty() {
+                ui::dim("No jobs yet. Run: gpumesh run --peer <name> …");
+                return Ok(());
+            }
+            println!(
+                "  {:<8} {:<10} {:<16} {:<12} {}",
+                "ID", "STATE", "PEER", "EXIT", "CREATED"
+            );
+            for j in jobs.into_iter().take(limit) {
+                println!(
+                    "  {:<8} {:<10} {:<16} {:<12} {}",
+                    j.job_id,
+                    j.state.to_string(),
+                    j.peer.as_deref().unwrap_or("-"),
+                    j.exit_code
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "-".into()),
+                    j.created_at.format("%Y-%m-%d %H:%M")
+                );
             }
             Ok(())
         }
-        Commands::Cp { src, dst } => {
-            let mut node = MeshNode::bootstrap().await?;
-            node.start_network().await?;
-            if let Some((peer, remote)) = split_remote(&src) {
-                // download
-                transfer_file_from_peer(&node, peer, remote, &PathBuf::from(&dst)).await?;
-                println!("Downloaded {src} → {dst}");
-            } else if let Some((peer, remote)) = split_remote(&dst) {
-                transfer_file_to_peer(&node, peer, &PathBuf::from(&src), remote).await?;
-                println!("Uploaded {src} → {dst}");
+        Commands::Logs { job_id, follow } => {
+            if let Some(id) = job_id {
+                if let Ok(rec) = JobRecord::load(&id) {
+                    ui::kv("Job", &rec.job_id);
+                    ui::kv("State", rec.state.to_string());
+                    if let Some(e) = &rec.error {
+                        ui::kv("Error", e);
+                    }
+                }
+                let log = JobRecord::read_log(&id)?;
+                if log.is_empty() {
+                    ui::dim("No captured log for this job (stdout was streamed live).");
+                } else {
+                    print!("{log}");
+                }
+                if follow {
+                    ui::warn("--follow not yet attached to live remote streams; use run.");
+                }
             } else {
-                bail!("one of src/dst must be peer:path (e.g. alice:/data/out.bin)");
+                let path = gpumesh_common::agent_log_path();
+                if path.exists() {
+                    let text = std::fs::read_to_string(&path)?;
+                    print!("{text}");
+                } else {
+                    ui::dim(format!(
+                        "No agent log at {} — sharing process logs to stderr.",
+                        path.display()
+                    ));
+                }
             }
             Ok(())
         }
         Commands::Cancel { peer, job_id } => {
+            let peer = peer.context("pass --peer <name> (or set GPUMESH_PEER)")?;
             let mut node = MeshNode::bootstrap().await?;
             node.start_network().await?;
             let conn = node.connect_peer(&peer).await?;
@@ -204,7 +365,7 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
             match conn.recv().await? {
                 Some(Message::CancelAck { ok, .. }) => {
                     if ok {
-                        println!("Cancelled {job_id}");
+                        ui::ok(format!("Cancelled {job_id}"));
                     } else {
                         bail!("cancel failed for {job_id}");
                     }
@@ -213,17 +374,35 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
             }
             Ok(())
         }
+        Commands::Config { action } => config_cmd(action).await,
+        Commands::Update { check } => crate::update::run(check).await,
+        Commands::Completion { shell } => {
+            let mut cmd = crate::Cli::command();
+            clap_complete::generate(shell, &mut cmd, "gpumesh", &mut std::io::stdout());
+            Ok(())
+        }
+        Commands::Cp { src, dst } => {
+            let mut node = MeshNode::bootstrap().await?;
+            node.start_network().await?;
+            if let Some((peer, remote)) = split_remote(&src) {
+                transfer_file_from_peer(&node, peer, remote, &PathBuf::from(&dst)).await?;
+                ui::ok(format!("Downloaded {src} → {dst}"));
+            } else if let Some((peer, remote)) = split_remote(&dst) {
+                transfer_file_to_peer(&node, peer, &PathBuf::from(&src), remote).await?;
+                ui::ok(format!("Uploaded {src} → {dst}"));
+            } else {
+                bail!("one of src/dst must be peer:path (e.g. alice:/data/out.bin)");
+            }
+            Ok(())
+        }
         Commands::Exec {
             peer,
             shell,
             image,
         } => {
-            // Isolated shell = containerized job with interactive-ish command.
+            ui::warn("exec runs an isolated container shell (not host SSH)");
             let mut node = MeshNode::bootstrap().await?;
             node.start_network().await?;
-            println!(
-                "note: exec runs an isolated container shell on the peer (not host SSH)"
-            );
             let code = run_remote_job(
                 &node,
                 &peer,
@@ -246,6 +425,80 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
     }
 }
 
+async fn config_cmd(action: Option<ConfigAction>) -> Result<()> {
+    let action = action.unwrap_or(ConfigAction::Show);
+    match action {
+        ConfigAction::Path => {
+            println!("{}", gpumesh_common::config_path().display());
+            Ok(())
+        }
+        ConfigAction::Show => {
+            ui::print_banner();
+            let cfg = StateStore::load_config()?;
+            let text = toml::to_string_pretty(&cfg)?;
+            print!("{text}");
+            ui::dim(format!("\nPath: {}", gpumesh_common::config_path().display()));
+            Ok(())
+        }
+        ConfigAction::Get { key } => {
+            let cfg = StateStore::load_config()?;
+            let val = config_get(&cfg, &key)?;
+            println!("{val}");
+            Ok(())
+        }
+        ConfigAction::Set { key, value } => {
+            let mut cfg = StateStore::load_config()?;
+            config_set(&mut cfg, &key, &value)?;
+            StateStore::save_config(&cfg)?;
+            ui::ok(format!("Set {key} = {value}"));
+            Ok(())
+        }
+    }
+}
+
+fn config_get(cfg: &gpumesh_common::NodeConfig, key: &str) -> Result<String> {
+    let v = match key {
+        "node_name" => cfg.node_name.clone(),
+        "listen_port" => cfg.listen_port.to_string(),
+        "default_image" => cfg.default_image.clone(),
+        "rendezvous_url" => cfg.rendezvous_url.clone().unwrap_or_default(),
+        "max_concurrent_jobs" => cfg.max_concurrent_jobs.to_string(),
+        "default_retries" => cfg.default_retries.to_string(),
+        "sharing_enabled" => cfg.sharing_enabled.to_string(),
+        "update_url" => cfg.update_url.clone().unwrap_or_default(),
+        other => bail!("unknown key: {other}"),
+    };
+    Ok(v)
+}
+
+fn config_set(cfg: &mut gpumesh_common::NodeConfig, key: &str, value: &str) -> Result<()> {
+    match key {
+        "node_name" => cfg.node_name = value.into(),
+        "listen_port" => cfg.listen_port = value.parse()?,
+        "default_image" => cfg.default_image = value.into(),
+        "rendezvous_url" => {
+            cfg.rendezvous_url = if value.is_empty() {
+                None
+            } else {
+                Some(value.into())
+            }
+        }
+        "max_concurrent_jobs" => cfg.max_concurrent_jobs = value.parse()?,
+        "default_retries" => cfg.default_retries = value.parse()?,
+        "sharing_enabled" => cfg.sharing_enabled = value.parse()?,
+        "update_url" => {
+            cfg.update_url = if value.is_empty() {
+                None
+            } else {
+                Some(value.into())
+            }
+        }
+        "max_vram_mb" => cfg.max_vram_mb = Some(value.parse()?),
+        other => bail!("unknown or read-only key: {other}"),
+    }
+    Ok(())
+}
+
 async fn run_share_loop(
     max_vram: Option<String>,
     max_gpu_utilization: Option<u8>,
@@ -258,6 +511,7 @@ async fn run_agent(
     max_vram: Option<String>,
     max_gpu_utilization: Option<u8>,
 ) -> Result<()> {
+    ui::print_banner();
     let mut node = MeshNode::bootstrap()
         .await
         .context("run `gpumesh init` first")?;
@@ -266,21 +520,28 @@ async fn run_agent(
         node.enable_share(max_vram, max_gpu_utilization).await?;
         let cfg = node.config.read().await.clone();
         let gpus = MeshNode::detect_gpus().unwrap_or_default();
-        println!("GPUMesh\n");
         if let Some(g) = gpus.first() {
-            println!("GPU: {}", g.name);
-            println!(
-                "VRAM: {} GB",
-                (g.vram_total_mb as f64 / 1024.0).round()
+            ui::kv("GPU", &g.name);
+            ui::kv(
+                "VRAM",
+                format!("{} GB", (g.vram_total_mb as f64 / 1024.0).round()),
             );
             let avail = cfg.max_vram_mb.unwrap_or(g.vram_free_mb);
-            println!("Available: {} GB", (avail as f64 / 1024.0).round());
+            ui::kv(
+                "Available",
+                format!("{} GB", (avail as f64 / 1024.0).round()),
+            );
         }
-        println!("\nSharing enabled.\nWaiting for authorized peers...");
+        ui::ok("Sharing enabled — waiting for authorized peers…");
         if let Ok(code) = node.pairing_code().await {
-            println!("\nPairing code:\n{code}");
+            println!();
+            ui::dim("Pairing code:");
+            println!("{code}");
         }
     }
+
+    // Ensure logs dir
+    let _ = std::fs::create_dir_all(gpumesh_common::logs_dir());
 
     let node = Arc::new(node);
     let endpoint = node.endpoint()?;
@@ -296,7 +557,7 @@ async fn run_agent(
             }
             Err(e) => {
                 error!("accept error: {e}");
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                tokio::time::sleep(Duration::from_millis(200)).await;
             }
         }
     }
@@ -306,7 +567,7 @@ async fn try_probe(
     node: &MeshNode,
     peer_id: &str,
 ) -> Result<(PeerStatus, Option<String>, Option<u64>)> {
-    let mut conn = node.connect_peer(peer_id).await?;
+    let conn = node.connect_peer(peer_id).await?;
     conn.send(Message::PeerInfoRequest).await?;
     let result = match conn.recv().await? {
         Some(Message::PeerInfo(info)) => Ok((info.status, info.gpu_model, info.vram_total_mb)),
@@ -318,7 +579,6 @@ async fn try_probe(
 
 fn split_remote(s: &str) -> Option<(&str, &str)> {
     let (peer, path) = s.split_once(':')?;
-    // Avoid treating Windows drive letters as peers (C:\...)
     if peer.len() == 1 && peer.chars().next()?.is_ascii_alphabetic() {
         return None;
     }
