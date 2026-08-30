@@ -101,6 +101,7 @@ Examples:
   gpumesh app pull --peer alice-pc --job <id>
   gpumesh cuda share
   gpumesh cuda demo --peer alice-pc
+  gpumesh cuda bridge --peer alice-pc
   gpumesh init --name my-pc
   gpumesh share
   gpumesh share --public --region us-west

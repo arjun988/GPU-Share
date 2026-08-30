@@ -1,0 +1,14 @@
+[package]
+name = "gpumesh-cudart-stub"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CUDA Runtime ABI stub that talks to gpumesh cuda bridge (R3)"
+
+[lib]
+name = "cudart"
+crate-type = ["cdylib"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

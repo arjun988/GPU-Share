@@ -179,6 +179,18 @@ pub enum Message {
         ptr: Option<u64>,
         #[serde(default)]
         data: Option<Vec<u8>>,
+        #[serde(default)]
+        free_bytes: Option<u64>,
+        #[serde(default)]
+        total_bytes: Option<u64>,
+        #[serde(default)]
+        device_index: Option<u32>,
+        #[serde(default)]
+        event_id: Option<u64>,
+        #[serde(default)]
+        module_id: Option<u64>,
+        #[serde(default)]
+        elapsed_ms: Option<f32>,
     },
     GpuRemoteClose {
         session_id: String,
@@ -195,7 +207,7 @@ pub struct CudaDeviceInfo {
     pub compute_capability: Option<String>,
 }
 
-/// Subset of CUDA Runtime-style ops for the R2 spike.
+/// Subset of CUDA Runtime-style ops (R2 + R3 expansions).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CudaOpKind {
@@ -217,12 +229,46 @@ pub enum CudaOpKind {
         src: u64,
         bytes: u64,
     },
+    MemcpyDtoD {
+        dst: u64,
+        src: u64,
+        bytes: u64,
+    },
     Memset {
         ptr: u64,
         value: u8,
         bytes: u64,
     },
     Sync,
+    MemGetInfo,
+    SetDevice {
+        device: u32,
+    },
+    GetDevice,
+    EventCreate,
+    EventDestroy {
+        event: u64,
+    },
+    EventRecord {
+        event: u64,
+    },
+    EventElapsed {
+        start: u64,
+        end: u64,
+    },
+    /// Load a PTX module (cuda-driver backend). Size-capped on host.
+    LoadModulePtx {
+        ptx: String,
+    },
+    /// Launch a function from a loaded module. `args` are remoted device ptr handles.
+    LaunchKernel {
+        module_id: u64,
+        function: String,
+        grid: [u32; 3],
+        block: [u32; 3],
+        shared_mem: u32,
+        args: Vec<u64>,
+    },
     /// Built-in f32 vector add: out[i] = a[i] + b[i] for i in 0..n (n elements).
     VectorAddF32 {
         a: u64,

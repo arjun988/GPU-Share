@@ -13,6 +13,7 @@ members = [
     "crates/gpumesh-agent",
     "crates/gpumesh-cli",
     "crates/gpumesh-control",
+    "crates/gpumesh-cudart-stub",
 ]
 default-members = ["crates/gpumesh-cli", "crates/gpumesh-agent"]
 
@@ -76,3 +77,4 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 bincode = "1"
 mdns-sd = "0.13"
 local-ip-address = "0.6"
+cudarc = { version = "0.19.9", default-features = false, features = ["cuda-12060", "driver", "nvrtc", "std", "dynamic-loading"] }

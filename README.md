@@ -152,9 +152,9 @@ gpumesh app pull --peer alice-pc --job <id> --dir ./out
 gpumesh app run --peer alice-pc --dir ./proj --desktop
 ```
 
-## CUDA remoting spike (`gpumesh cuda`)
+## CUDA remoting (`gpumesh cuda`)
 
-LAN-oriented Runtime-API remoting (R2). **Not** a drop-in `libcuda` for arbitrary apps.
+LAN Runtime-API remoting. Host uses **cuda-driver** (real PTX kernels) when NVIDIA `libcuda` loads.
 
 ```bash
 # Host
@@ -164,6 +164,7 @@ gpumesh cuda allow bob-laptop
 # Client
 gpumesh cuda demo --peer alice-pc
 gpumesh cuda bench --peer alice-pc
+gpumesh cuda bridge --peer alice-pc   # for C stub apps
 ```
 
 Details: [docs/cuda-remote.md](./docs/cuda-remote.md).

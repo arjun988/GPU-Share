@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const PROTOCOL_MAJOR: u16 = 1;
-pub const PROTOCOL_MINOR: u16 = 3;
+pub const PROTOCOL_MINOR: u16 = 4;
 pub const DEFAULT_AGENT_PORT: u16 = 47000;
 pub const DEFAULT_IMAGE: &str = "nvidia/cuda:12.8.0-runtime-ubuntu22.04";
 pub const APP_DIR_NAME: &str = ".gpumesh";

@@ -108,7 +108,7 @@ pub(crate) enum Commands {
         #[command(subcommand)]
         action: app::AppCmd,
     },
-    /// CUDA remoting spike (R2 — LAN Runtime-API subset)
+    /// CUDA remoting (R3 — cuda-driver / host-memory Runtime subset)
     Cuda {
         #[command(subcommand)]
         action: cuda::CudaCmd,

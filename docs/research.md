@@ -282,12 +282,13 @@ gpumesh cuda bench --peer alice-pc --iters 50
 - Docs: [cuda-remote.md](./cuda-remote.md)  
 - **Not included:** PyTorch / arbitrary CUDA apps / ICD interposition  
 
-### R3 — Expand remoting only if R2 metrics look good
+### R3 — Real CUDA driver + broader API — **done (narrow)**
 
-- Real CUDA driver / PTX kernel path  
-- Broader Runtime API  
-- Optional OpenGL path  
-- Never promise D3D12/Vulkan “all Steam games” without a dedicated graphics team  
+- Host backend **`cuda-driver`** (cudarc + NVRTC PTX) when `libcuda` loads; else **host-memory**
+- Extra ops: DtoD, meminfo, set/get device, events, `LoadModulePtx`, `LaunchKernel` (≤4 ptr args)
+- C path: `gpumesh cuda bridge` + `gpumesh-cudart-stub` + `examples/cuda_stub_sample.c`
+- OpenGL remoting **deferred** (use desktop)
+- Docs: [cuda-remote.md](./cuda-remote.md)
 
 ### Explicit non-goals (near term)
 
@@ -306,7 +307,7 @@ gpumesh cuda bench --peer alice-pc --iters 50
 | Use Blender/Unity GUI on peer GPU | **Already: `gpumesh desktop`** (app on host) |
 | Keep `.exe` local, GPU remote, any app | **Research; not R2** — spike is remoting API, not ICD |
 | Keep project local-feeling, GPU remote | **Shipped: `gpumesh app` (R1)** |
-| CUDA-only tools, LAN | **Shipped spike: `gpumesh cuda` (R2)** — expand in R3 |
+| CUDA-only tools, LAN | **Shipped: `gpumesh cuda` (R2/R3)** — not full PyTorch ICD |
 
 ---
 
@@ -325,10 +326,10 @@ gpumesh cuda bench --peer alice-pc --iters 50
 
 | Question | Answer |
 | --- | --- |
-| Can GPUMesh do local-app → remote-GPU today? | **Partially** — `gpumesh cuda` remotes a small API; **not** drop-in libcuda |
-| Can users still use peer GPUs for apps today? | **Yes** — **`gpumesh app`**, **desktop**, **jobs**, or **`cuda` demo** |
-| Can we eventually do true remoting? | **Maybe** — R3 if bench/demo metrics on LAN look usable |
-| Best next product step | **R3** only if R2 p50 RTT is acceptable on your LAN; else stay on app/desktop |
+| Can GPUMesh do local-app → remote-GPU today? | **Partially** — `gpumesh cuda` remotes a Runtime subset; **cuda-driver** runs real PTX on the host |
+| Can users still use peer GPUs for apps today? | **Yes** — **`gpumesh app`**, **desktop**, **jobs**, or **`cuda` demo/bridge** |
+| Can we eventually do true remoting? | **Narrow CUDA yes (R3)**; not D3D/Vulkan/games |
+| Best next product step | Harden stub ABI / more Runtime APIs only if LAN bench looks good |
 
 ---
 
@@ -342,4 +343,4 @@ gpumesh cuda bench --peer alice-pc --iters 50
 
 ---
 
-*Last updated: R2 CUDA remoting spike shipped (`gpumesh cuda`). Full libcuda interposition still research / R3.*
+*Last updated: R3 cuda-driver backend + cudart stub/bridge shipped. OpenGL remoting deferred.*

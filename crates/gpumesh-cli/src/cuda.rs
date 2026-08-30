@@ -1,7 +1,7 @@
 //! `gpumesh cuda` — R2 CUDA remoting spike (LAN-oriented).
 
 use anyhow::{bail, Result};
-use gpumesh_core::{run_bench, run_demo, MeshNode};
+use gpumesh_core::{probe_cuda_driver, run_bench, run_bridge, run_demo, MeshNode};
 use gpumesh_gpu::GpuMonitor;
 
 use crate::ui;
@@ -29,6 +29,14 @@ pub enum CudaCmd {
     },
     /// Check local GPU + remoting readiness
     Doctor,
+    /// Local TCP bridge for the cudart stub (C apps)
+    Bridge {
+        #[arg(long, env = "GPUMESH_PEER")]
+        peer: String,
+        /// Bind address (default 127.0.0.1:17999)
+        #[arg(long, default_value = "127.0.0.1:17999")]
+        bind: String,
+    },
 }
 
 pub async fn dispatch(cmd: CudaCmd) -> Result<()> {
@@ -38,6 +46,7 @@ pub async fn dispatch(cmd: CudaCmd) -> Result<()> {
         CudaCmd::Demo { peer, n } => demo(peer, n).await,
         CudaCmd::Bench { peer, iters } => bench(peer, iters).await,
         CudaCmd::Doctor => doctor().await,
+        CudaCmd::Bridge { peer, bind } => bridge(peer, bind).await,
     }
 }
 
@@ -53,8 +62,8 @@ async fn allow(peer: String) -> Result<()> {
 
 async fn doctor() -> Result<()> {
     ui::print_banner();
-    ui::section("CUDA remoting doctor (R2)");
-    ui::warn("LAN-oriented spike — WAN Runtime remoting is usually too slow.");
+    ui::section("CUDA remoting doctor (R3)");
+    ui::warn("LAN-oriented — WAN Runtime remoting is usually too slow.");
 
     let gpus = GpuMonitor::detect().unwrap_or_default();
     ui::check_line(
@@ -91,9 +100,13 @@ async fn doctor() -> Result<()> {
     );
 
     ui::section("Backend");
-    ui::info("Spike backend: host-memory + NVML device identity");
-    ui::dim("Device buffers live on the host; ops are remoted over authenticated QUIC.");
-    ui::dim("Not a drop-in libcuda for arbitrary PyTorch/CUDA apps (see docs/cuda-remote.md).");
+    match probe_cuda_driver() {
+        Ok(s) => ui::ok(format!("Host driver: {s}")),
+        Err(e) => ui::warn(format!("cuda-driver not loadable ({e}); remoting falls back to host-memory")),
+    }
+    ui::dim("R3 prefers cuda-driver (real kernels). Fallback: host-memory + NVML identity.");
+    ui::dim("C apps: gpumesh cuda bridge --peer <name>  then link gpumesh-cudart-stub.");
+    ui::dim("Not a drop-in ICD for PyTorch. OpenGL remoting is deferred.");
     Ok(())
 }
 
@@ -160,6 +173,15 @@ async fn bench(peer: String, iters: u32) -> Result<()> {
     Ok(())
 }
 
+async fn bridge(peer: String, bind: String) -> Result<()> {
+    ui::print_banner();
+    ui::warn("Bridge is for the libcudart stub — keep `gpumesh cuda share` running on the host.");
+    let mut node = MeshNode::bootstrap().await?;
+    node.start_network().await?;
+    run_bridge(&node, &peer, &bind).await?;
+    Ok(())
+}
+
 fn print_latency(s: &gpumesh_core::LatencySummary) {
     ui::kv("min", s.min.to_string());
     ui::kv("p50", s.p50.to_string());
@@ -169,7 +191,7 @@ fn print_latency(s: &gpumesh_core::LatencySummary) {
 
 async fn share() -> Result<()> {
     ui::print_banner();
-    ui::warn("R2 CUDA remoting is LAN-oriented. Prefer same Wi‑Fi / wired LAN.");
+    ui::warn("CUDA remoting is LAN-oriented. Prefer same Wi‑Fi / wired LAN.");
     let mut node = MeshNode::bootstrap().await?;
     node.start_network().await?;
     node.enable_cuda_remote_share().await?;
@@ -182,9 +204,10 @@ async fn share() -> Result<()> {
         "CUDA remoting share enabled — {}",
         gpus.first().map(|g| g.name.as_str()).unwrap_or("GPU")
     ));
-    ui::dim("Backend: host-memory + NVML (spike)");
+    ui::dim("Backend: cuda-driver when libcuda loads, else host-memory");
     ui::dim("Allow a client:  gpumesh cuda allow <peer>");
     ui::dim("Client runs:     gpumesh cuda demo --peer <your-name>");
+    ui::dim("C stub:          gpumesh cuda bridge --peer <your-name>");
     if let Ok(code) = node.pairing_code().await {
         println!();
         ui::dim("Pairing code:");

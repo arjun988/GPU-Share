@@ -2,13 +2,17 @@
 
 mod handshake;
 mod desktop;
+mod cuda_backend;
 mod cuda_remote;
 mod node;
 mod remote;
 mod scheduler;
 mod status;
 
-pub use cuda_remote::{run_bench, run_demo, BenchReport, CudaRemoteClient, DemoReport, LatencySummary};
+pub use cuda_backend::probe_cuda_driver;
+pub use cuda_remote::{
+    run_bench, run_bridge, run_demo, BenchReport, CudaRemoteClient, DemoReport, LatencySummary,
+};
 pub use desktop::{connect_desktop, detect_backend};
 pub use node::MeshNode;
 pub use remote::{

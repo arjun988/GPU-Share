@@ -1,8 +1,7 @@
-//! R2 CUDA remoting spike — authenticated QUIC session with a Runtime-API subset.
+//! CUDA remoting (R2 spike + R3 driver backend).
 //!
-//! Honest scope: this remotes a **small** op set over GPUMesh pairing. Device buffers in
-//! the `host-memory` backend live in host RAM; device *identity* comes from NVML when
-//! present. This is **not** a drop-in `libcuda` replacement for arbitrary apps.
+//! Remotes a Runtime-API subset over GPUMesh pairing. Prefer `cuda-driver` when
+//! libcuda loads; otherwise `host-memory`. Not a drop-in `libcuda` for arbitrary apps.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,156 +14,39 @@ use gpumesh_protocol::{CudaDeviceInfo, CudaOpKind, Message};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::cuda_backend::BackendSession;
 use crate::MeshNode;
 
-pub const CUDA_REMOTE_CLIENT_VER: u32 = 1;
+pub const CUDA_REMOTE_CLIENT_VER: u32 = 2;
 pub const CUDA_REMOTE_API: &str = "cuda";
 
 const DEFAULT_MAX_ALLOC: u64 = 512 * 1024 * 1024;
-const MAX_SINGLE_ALLOC: u64 = 256 * 1024 * 1024;
-const MAX_MEMCPY: u64 = 64 * 1024 * 1024;
 
 pub(crate) struct CudaSession {
     #[allow(dead_code)]
     session_id: String,
-    max_alloc: u64,
-    used: u64,
-    next_ptr: u64,
-    buffers: HashMap<u64, Vec<u8>>,
-    devices: Vec<CudaDeviceInfo>,
-    backend: String,
+    backend: BackendSession,
 }
 
 impl CudaSession {
     fn new(session_id: String, max_alloc: u64, devices: Vec<CudaDeviceInfo>) -> Self {
+        let backend = BackendSession::open(max_alloc, devices);
         Self {
             session_id,
-            max_alloc,
-            used: 0,
-            next_ptr: 0x1000, // opaque non-null style ids
-            buffers: HashMap::new(),
-            devices,
-            backend: "host-memory".into(),
+            backend,
         }
     }
 
-    fn exec(&mut self, op: CudaOpKind) -> (bool, Option<String>, CudaPartial) {
-        let mut partial = CudaPartial::default();
-        match op {
-            CudaOpKind::DeviceCount => {
-                partial.device_count = Some(self.devices.len() as u32);
-                (true, None, partial)
-            }
-            CudaOpKind::DeviceProps { device } => match self.devices.get(device as usize) {
-                Some(d) => {
-                    partial.device = Some(d.clone());
-                    (true, None, partial)
-                }
-                None => (false, Some(format!("invalid device index {device}")), partial),
-            },
-            CudaOpKind::Malloc { bytes } => {
-                if bytes == 0 {
-                    return (false, Some("cudaMalloc size 0".into()), partial);
-                }
-                if bytes > MAX_SINGLE_ALLOC {
-                    return (
-                        false,
-                        Some(format!("alloc {bytes} exceeds per-buffer cap {MAX_SINGLE_ALLOC}")),
-                        partial,
-                    );
-                }
-                if self.used.saturating_add(bytes) > self.max_alloc {
-                    return (
-                        false,
-                        Some(format!(
-                            "session alloc cap exceeded (used {} + {bytes} > {})",
-                            self.used, self.max_alloc
-                        )),
-                        partial,
-                    );
-                }
-                let ptr = self.next_ptr;
-                self.next_ptr = self.next_ptr.saturating_add(bytes.max(64)).saturating_add(64);
-                self.buffers.insert(ptr, vec![0u8; bytes as usize]);
-                self.used = self.used.saturating_add(bytes);
-                partial.ptr = Some(ptr);
-                (true, None, partial)
-            }
-            CudaOpKind::Free { ptr } => {
-                if let Some(buf) = self.buffers.remove(&ptr) {
-                    self.used = self.used.saturating_sub(buf.len() as u64);
-                    (true, None, partial)
-                } else {
-                    (false, Some(format!("invalid device ptr {ptr:#x}")), partial)
-                }
-            }
-            CudaOpKind::MemcpyHtoD { dst, data } => {
-                if data.len() as u64 > MAX_MEMCPY {
-                    return (false, Some("memcpy too large".into()), partial);
-                }
-                match self.buffers.get_mut(&dst) {
-                    Some(buf) if data.len() <= buf.len() => {
-                        buf[..data.len()].copy_from_slice(&data);
-                        (true, None, partial)
-                    }
-                    Some(_) => (false, Some("HtoD overflows buffer".into()), partial),
-                    None => (false, Some(format!("invalid dst ptr {dst:#x}")), partial),
-                }
-            }
-            CudaOpKind::MemcpyDtoH { src, bytes } => {
-                if bytes > MAX_MEMCPY {
-                    return (false, Some("memcpy too large".into()), partial);
-                }
-                match self.buffers.get(&src) {
-                    Some(buf) if (bytes as usize) <= buf.len() => {
-                        partial.data = Some(buf[..bytes as usize].to_vec());
-                        (true, None, partial)
-                    }
-                    Some(_) => (false, Some("DtoH overflows buffer".into()), partial),
-                    None => (false, Some(format!("invalid src ptr {src:#x}")), partial),
-                }
-            }
-            CudaOpKind::Memset { ptr, value, bytes } => match self.buffers.get_mut(&ptr) {
-                Some(buf) if (bytes as usize) <= buf.len() => {
-                    buf[..bytes as usize].fill(value);
-                    (true, None, partial)
-                }
-                Some(_) => (false, Some("memset overflows buffer".into()), partial),
-                None => (false, Some(format!("invalid ptr {ptr:#x}")), partial),
-            },
-            CudaOpKind::Sync => (true, None, partial),
-            CudaOpKind::VectorAddF32 { a, b, out, n } => {
-                let need = (n as usize).saturating_mul(4);
-                let Some(ab) = self.buffers.get(&a).cloned() else {
-                    return (false, Some(format!("invalid a ptr {a:#x}")), partial);
-                };
-                let Some(bb) = self.buffers.get(&b).cloned() else {
-                    return (false, Some(format!("invalid b ptr {b:#x}")), partial);
-                };
-                let Some(ob) = self.buffers.get_mut(&out) else {
-                    return (false, Some(format!("invalid out ptr {out:#x}")), partial);
-                };
-                if ab.len() < need || bb.len() < need || ob.len() < need {
-                    return (false, Some("vector_add buffer too small".into()), partial);
-                }
-                for i in 0..n as usize {
-                    let o = i * 4;
-                    let x = f32::from_le_bytes(ab[o..o + 4].try_into().unwrap());
-                    let y = f32::from_le_bytes(bb[o..o + 4].try_into().unwrap());
-                    ob[o..o + 4].copy_from_slice(&(x + y).to_le_bytes());
-                }
-                (true, None, partial)
-            }
-        }
+    fn backend_name(&self) -> &str {
+        &self.backend.backend_name
     }
-}
 
-#[derive(Default)]
-struct CudaPartial {
-    device_count: Option<u32>,
-    device: Option<CudaDeviceInfo>,
-    ptr: Option<u64>,
-    data: Option<Vec<u8>>,
+    fn exec(
+        &mut self,
+        op: CudaOpKind,
+    ) -> (bool, Option<String>, crate::cuda_backend::CudaPartial) {
+        self.backend.exec(op)
+    }
 }
 
 fn collect_devices() -> Vec<CudaDeviceInfo> {
@@ -203,7 +85,7 @@ pub async fn handle_gpu_remote_open(
 
     if api != CUDA_REMOTE_API {
         conn.send(Message::GpuRemoteReject {
-            reason: format!("unsupported remoting api '{api}' (spike supports 'cuda')"),
+            reason: format!("unsupported remoting api '{api}' (supports 'cuda'; OpenGL deferred)"),
         })
         .await?;
         return Ok(());
@@ -241,7 +123,6 @@ pub async fn handle_gpu_remote_open(
         return Ok(());
     }
 
-    // VRAM / util gates (same spirit as jobs).
     let limits = node.share_limits().await;
     if let Some(max_util) = limits.max_gpu_utilization {
         if let Some(g) = GpuMonitor::detect().ok().and_then(|g| g.into_iter().next()) {
@@ -266,7 +147,7 @@ pub async fn handle_gpu_remote_open(
 
     let session_id = Uuid::new_v4().to_string();
     let session = CudaSession::new(session_id.clone(), max_alloc, devices.clone());
-    let backend = session.backend.clone();
+    let backend = session.backend_name().to_string();
     sessions.insert(session_id.clone(), session);
 
     conn.send(Message::GpuRemoteOffer {
@@ -275,8 +156,9 @@ pub async fn handle_gpu_remote_open(
         backend,
         max_alloc_bytes: max_alloc,
         devices,
-        lan_warning: "R2 CUDA remoting is LAN-oriented; WAN latency makes Runtime remoting painful."
-            .into(),
+        lan_warning:
+            "CUDA remoting is LAN-oriented (R3). WAN Runtime remoting is usually too slow."
+                .into(),
     })
     .await?;
     info!("CUDA remoting session {session_id} opened for {peer_id}");
@@ -301,6 +183,12 @@ pub async fn handle_cuda_op(
             device: None,
             ptr: None,
             data: None,
+            free_bytes: None,
+            total_bytes: None,
+            device_index: None,
+            event_id: None,
+            module_id: None,
+            elapsed_ms: None,
         })
         .await?;
         return Ok(());
@@ -320,6 +208,12 @@ pub async fn handle_cuda_op(
         device: partial.device,
         ptr: partial.ptr,
         data: partial.data,
+        free_bytes: partial.free_bytes,
+        total_bytes: partial.total_bytes,
+        device_index: partial.device_index,
+        event_id: partial.event_id,
+        module_id: partial.module_id,
+        elapsed_ms: partial.elapsed_ms,
     })
     .await?;
     Ok(())
@@ -409,6 +303,7 @@ impl CudaRemoteClient {
                     device,
                     ptr,
                     data,
+                    ..
                 }) if session_id == self.session_id && rid == op_id => {
                     return Ok(OpResult {
                         ok,
@@ -473,6 +368,14 @@ impl CudaRemoteClient {
         Ok((data, r.elapsed_us))
     }
 
+    pub async fn memcpy_dtod(&mut self, dst: u64, src: u64, bytes: u64) -> Result<u64> {
+        let r = Self::unwrap_ok(
+            self.call(CudaOpKind::MemcpyDtoD { dst, src, bytes })
+                .await?,
+        )?;
+        Ok(r.elapsed_us)
+    }
+
     pub async fn vector_add_f32(&mut self, a: u64, b: u64, out: u64, n: u32) -> Result<u64> {
         let r = Self::unwrap_ok(
             self.call(CudaOpKind::VectorAddF32 { a, b, out, n })
@@ -494,6 +397,121 @@ impl CudaRemoteClient {
             .await?;
         self.conn.close();
         Ok(())
+    }
+}
+
+/// Local TCP bridge so C apps can use `libcudart` stub without embedding QUIC.
+pub async fn run_bridge(node: &MeshNode, peer: &str, bind: &str) -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+    use tokio::sync::Mutex;
+
+    let client = CudaRemoteClient::open(node, peer).await?;
+    let listener = TcpListener::bind(bind)
+        .await
+        .map_err(|e| GpuMeshError::Network(e.to_string()))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|e| GpuMeshError::Network(e.to_string()))?;
+    println!("CUDA remoting bridge listening on {addr}");
+    println!("  Peer:    {peer}");
+    println!("  Backend: {}", client.backend);
+    println!("  Export:  GPUMESH_CUDA_BRIDGE={addr}");
+    println!("  Stub:    cargo build -p gpumesh-cudart-stub");
+    println!("Leave this running. Ctrl+C to stop.");
+
+    let client = std::sync::Arc::new(Mutex::new(client));
+    loop {
+        let (mut sock, _) = listener
+            .accept()
+            .await
+            .map_err(|e| GpuMeshError::Network(e.to_string()))?;
+        let client = client.clone();
+        tokio::spawn(async move {
+            loop {
+                let mut lenb = [0u8; 4];
+                if sock.read_exact(&mut lenb).await.is_err() {
+                    break;
+                }
+                let n = u32::from_be_bytes(lenb) as usize;
+                if n == 0 || n > 64 * 1024 * 1024 {
+                    break;
+                }
+                let mut buf = vec![0u8; n];
+                if sock.read_exact(&mut buf).await.is_err() {
+                    break;
+                }
+                let req: serde_json::Value = match serde_json::from_slice(&buf) {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let op = req.get("op").and_then(|v| v.as_str()).unwrap_or("");
+                let mut c = client.lock().await;
+                let resp = match op {
+                    "device_count" => match c.device_count().await {
+                        Ok(n) => serde_json::json!({"ok": true, "device_count": n}),
+                        Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
+                    },
+                    "malloc" => {
+                        let bytes = req.get("bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+                        match c.malloc(bytes).await {
+                            Ok(ptr) => serde_json::json!({"ok": true, "ptr": ptr}),
+                            Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
+                        }
+                    }
+                    "free" => {
+                        let ptr = req.get("ptr").and_then(|v| v.as_u64()).unwrap_or(0);
+                        match c.free(ptr).await {
+                            Ok(()) => serde_json::json!({"ok": true}),
+                            Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
+                        }
+                    }
+                    "htod" => {
+                        let dst = req.get("dst").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let data = req
+                            .get("data")
+                            .and_then(|v| v.as_array())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|x| x.as_u64().map(|n| n as u8))
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+                        match c.memcpy_htod(dst, &data).await {
+                            Ok(_) => serde_json::json!({"ok": true}),
+                            Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
+                        }
+                    }
+                    "dtoh" => {
+                        let src = req.get("src").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let bytes = req.get("bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+                        match c.memcpy_dtoh(src, bytes).await {
+                            Ok((data, _)) => serde_json::json!({"ok": true, "data": data}),
+                            Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
+                        }
+                    }
+                    "sync" => match c.sync().await {
+                        Ok(_) => serde_json::json!({"ok": true}),
+                        Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
+                    },
+                    "vector_add_f32" => {
+                        let a = req.get("dst").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let b = req.get("src").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let out = req.get("ptr").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let n = req.get("n").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                        match c.vector_add_f32(a, b, out, n).await {
+                            Ok(_) => serde_json::json!({"ok": true}),
+                            Err(e) => serde_json::json!({"ok": false, "error": e.to_string()}),
+                        }
+                    }
+                    _ => serde_json::json!({"ok": false, "error": "unknown op"}),
+                };
+                drop(c);
+                let out = serde_json::to_vec(&resp).unwrap_or_default();
+                let _ = sock.write_all(&(out.len() as u32).to_be_bytes()).await;
+                let _ = sock.write_all(&out).await;
+            }
+        });
     }
 }
 
