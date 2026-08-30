@@ -1,33 +1,31 @@
-import { apiGet } from "@/lib/api";
+"use client";
+
+import { usePoll } from "@/lib/use-poll";
+import type { LocalJob, LocalStatus } from "@/lib/api";
 import { Empty, PageHeader, Stat } from "@/components/ui";
 
-export const dynamic = "force-dynamic";
-
-export default async function UsagePage() {
-  let usage: {
-    jobs_total: number;
-    jobs_succeeded: number;
-    jobs_failed: number;
-    nodes: number;
-  } | null = null;
-  let error: string | null = null;
-  try {
-    usage = await apiGet("/v1/usage");
-  } catch (e) {
-    error = e instanceof Error ? e.message : "error";
-  }
+/** Kept for nav compatibility — live job counters from local jobs. */
+export default function UsagePage() {
+  const { data: status, error } = usePoll<LocalStatus>("/v1/local/status");
+  const { data: jobs } = usePoll<LocalJob[]>("/v1/local/jobs", 5000);
+  const list = jobs ?? [];
+  const succeeded = list.filter((j) => j.state === "SUCCEEDED").length;
+  const failed = list.filter((j) => j.state === "FAILED").length;
 
   return (
     <div>
-      <PageHeader title="Usage" subtitle="Aggregate job counters from synced nodes." />
-      {error || !usage ? (
-        <Empty>{error ?? "No usage data"}</Empty>
+      <PageHeader
+        title="Usage"
+        subtitle="Job counters from this node’s local history."
+      />
+      {error ? (
+        <Empty>{error}</Empty>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat label="Jobs total" value={usage.jobs_total} />
-          <Stat label="Succeeded" value={usage.jobs_succeeded} />
-          <Stat label="Failed" value={usage.jobs_failed} />
-          <Stat label="Nodes" value={usage.nodes} />
+          <Stat label="Jobs total" value={status?.jobs_total ?? list.length} />
+          <Stat label="Running" value={status?.jobs_running ?? 0} />
+          <Stat label="Succeeded" value={succeeded} />
+          <Stat label="Failed" value={failed} />
         </div>
       )}
     </div>

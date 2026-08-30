@@ -1,5 +1,6 @@
-//! GPUMesh control plane — rendezvous + dashboard metadata API.
-//! Never executes GPU workloads.
+//! GPUMesh control plane — rendezvous, dashboard metadata, and local console API.
+//! This process never runs GPU workloads; `/v1/local/*` reads `~/.gpumesh` and
+//! may dial peers (pair/connect/run) using an ephemeral QUIC endpoint.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -15,8 +16,10 @@ use chrono::Utc;
 use gpumesh_network::{PublicListing, PublicUnannounce};
 use gpumesh_security::{verify_public_listing, verify_signature};
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::CorsLayer;
+
+mod local;
 
 #[derive(Clone)]
 struct AppState {
@@ -188,6 +191,11 @@ async fn main() -> anyhow::Result<()> {
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers([CONTENT_TYPE, AUTHORIZATION]);
 
+    let local_state = local::LocalState {
+        api_token: state.api_token.clone(),
+        running: Arc::new(Mutex::new(std::collections::HashSet::new())),
+    };
+
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/v1/announce", post(announce))
@@ -206,8 +214,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/v1/public/unannounce", post(public_unannounce))
         .route("/v1/public/search", get(public_search))
         .route("/v1/public/nodes/{id}", get(public_get))
-        .layer(cors)
-        .with_state(state);
+        .with_state(state)
+        .merge(local::router(local_state))
+        .layer(cors);
 
     let addr: SocketAddr = std::env::var("GPUMESH_API_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:8080".into())
@@ -427,9 +436,10 @@ async fn usage(State(state): State<AppState>) -> Json<serde_json::Value> {
 
 async fn settings() -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "product": "GPUMesh Cloud",
+        "product": "GPUMesh",
         "phase": "7",
         "api_version": "v1",
+        "local_console": true,
         "security": "Ed25519 peer identity; public listing is metadata only; workloads stay allowlisted",
         "public_registry": true,
     }))

@@ -187,24 +187,25 @@ gpumesh search --gpu 5060 --vram 8GB --idle
 
 Then pair out-of-band (`gpumesh pair <code>`) before `run`. See [docs/phase7.md](./docs/phase7.md).
 
-## Dashboard (optional, local)
+## Dashboard (local console)
 
-Metadata only — does not run jobs.
+Live logs, GPU metrics, pairing, connect, and remote run — reads this machine’s
+`~/.gpumesh` via `gpumesh-control` (`/v1/local/*`). No `gpumesh sync` required.
 
 ```bash
-# API (Rust control plane works well from the same host as the CLI)
+# Terminal A — API
 cargo run -p gpumesh-control
-# or: cd services/control-plane && go run .
 
-# UI
+# Terminal B — UI
 cd dashboard && npm install && npm run dev
 
-gpumesh config set rendezvous_url http://127.0.0.1:8080
-gpumesh sync
-gpumesh dashboard
+gpumesh dashboard   # prints URLs
 ```
 
-Open http://127.0.0.1:3000 (or the port Next prints).
+Open http://127.0.0.1:3000 — Overview, Connect, GPUs, Peers, Jobs, Logs, Network.
+
+Synced `/v1/overview` etc. still work for multi-node metadata if you run
+`gpumesh sync`.
 
 ## CLI
 

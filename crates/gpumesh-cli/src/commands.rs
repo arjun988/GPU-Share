@@ -202,7 +202,7 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
         Commands::Sync => sync_to_control_plane().await,
         Commands::Dashboard => {
             ui::print_banner();
-            ui::section("GPUMesh Cloud Dashboard");
+            ui::section("GPUMesh local dashboard");
             let cfg = StateStore::load_config().unwrap_or_default();
             let api = cfg
                 .rendezvous_url
@@ -210,9 +210,10 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
             ui::kv("API", &api);
             ui::kv("UI", "http://127.0.0.1:3000");
             println!();
-            ui::dim("Start control plane:  cd services/control-plane && go run .");
-            ui::dim("Start dashboard:      cd dashboard && npm install && npm run dev");
-            ui::dim("Then:                 gpumesh sync");
+            ui::dim("Start API:        cargo run -p gpumesh-control");
+            ui::dim("Start UI:         cd dashboard && npm install && npm run dev");
+            ui::dim("Open:             http://127.0.0.1:3000");
+            ui::dim("Local console:    logs, metrics, pair, connect, run — no sync required");
             Ok(())
         }
         Commands::Run {

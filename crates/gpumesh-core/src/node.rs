@@ -1,3 +1,4 @@
+use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -74,6 +75,18 @@ impl MeshNode {
         StateStore::save_allowlist(&AllowList::default())?;
         let _ = PeerStore::load()?.save();
         Ok((identity, cfg))
+    }
+
+    /// Bind an ephemeral QUIC endpoint for outbound dials without occupying `listen_port`.
+    /// Safe while `gpumesh share` is already listening on this machine.
+    pub async fn ensure_dialer(&mut self) -> Result<()> {
+        if self.endpoint.is_some() {
+            return Ok(());
+        }
+        let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
+        let endpoint = NetworkEndpoint::bind_addr(self.identity.clone(), addr).await?;
+        self.endpoint = Some(Arc::new(endpoint));
+        Ok(())
     }
 
     pub async fn start_network(&mut self) -> Result<()> {

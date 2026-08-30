@@ -14,6 +14,10 @@ anyhow.workspace = true
 gpumesh-common.workspace = true
 gpumesh-network.workspace = true
 gpumesh-security.workspace = true
+gpumesh-storage.workspace = true
+gpumesh-gpu.workspace = true
+gpumesh-core = { path = "../gpumesh-core", default-features = false }
+gpumesh-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

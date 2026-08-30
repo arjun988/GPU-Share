@@ -1,12 +1,17 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap");
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Fraunces", Georgia, serif;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --canvas: #f3f5f8;
+  --line: #e2e8f0;
+  --text: #0f172a;
+  --muted: #64748b;
+  --accent: #0b5cab;
 }
 
 html,
@@ -16,22 +21,68 @@ body {
 
 body {
   font-family: var(--font-sans);
-  color: #e8f2ee;
-  background:
-    radial-gradient(1200px 600px at 10% -10%, rgba(45, 212, 168, 0.12), transparent 55%),
-    radial-gradient(900px 500px at 90% 0%, rgba(95, 143, 125, 0.1), transparent 50%),
-    linear-gradient(165deg, #0b1210 0%, #101a17 45%, #0d1613 100%);
-  background-attachment: fixed;
+  color: var(--text);
+  background: var(--canvas);
+}
+
+a {
+  @apply text-accent hover:text-accent-dim;
+}
+
+code {
+  @apply rounded px-1 py-0.5 font-mono text-[0.9em] text-mist-100 bg-ink-100;
 }
 
 .panel {
-  @apply rounded-2xl border border-white/10 bg-ink-800/70 backdrop-blur-sm;
+  @apply rounded-md border border-line bg-white shadow-panel;
 }
 
 .bar {
-  @apply h-2 overflow-hidden rounded-full bg-ink-950/80;
+  @apply h-1.5 overflow-hidden rounded-sm bg-ink-100;
 }
 
 .bar > span {
-  @apply block h-full rounded-full bg-accent;
+  @apply block h-full rounded-sm bg-accent;
+}
+
+.log-pane {
+  @apply max-h-[28rem] overflow-auto rounded-md border border-line bg-ink-700 p-4 font-mono text-xs leading-relaxed text-mist-300;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.data-table {
+  @apply w-full text-left text-sm;
+}
+
+.data-table thead {
+  @apply border-b border-line bg-ink-700 text-[11px] font-medium uppercase tracking-wide text-mist-500;
+}
+
+.data-table th {
+  @apply px-4 py-3;
+}
+
+.data-table td {
+  @apply px-4 py-3;
+}
+
+.data-table tbody tr {
+  @apply border-b border-line;
+}
+
+.data-table tbody tr:last-child {
+  @apply border-b-0;
+}
+
+.notice {
+  @apply mb-4 rounded-md border border-line bg-accent-soft px-4 py-2.5 text-sm text-mist-300;
+}
+
+.code-block {
+  @apply overflow-x-auto break-all rounded-md border border-line bg-ink-700 p-4 font-mono text-xs text-mist-100;
+}
+
+.section-title {
+  @apply text-base font-semibold tracking-tight text-mist-100;
 }

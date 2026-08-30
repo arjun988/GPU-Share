@@ -3,8 +3,8 @@ import "./globals.css";
 import { Shell } from "@/components/shell";
 
 export const metadata: Metadata = {
-  title: "GPUMesh Cloud",
-  description: "Dashboard for your private P2P GPU network",
+  title: "GPUMesh",
+  description: "Local console for your P2P GPU network",
 };
 
 export default function RootLayout({

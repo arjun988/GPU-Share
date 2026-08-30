@@ -1,64 +1,65 @@
-import { apiGet, type GroupRow } from "@/lib/api";
+"use client";
+
+import { usePoll } from "@/lib/use-poll";
+import type { LocalNetwork, LocalStatus } from "@/lib/api";
 import { Empty, PageHeader, Stat } from "@/components/ui";
 
-export const dynamic = "force-dynamic";
-
-export default async function NetworkPage() {
-  let net: Record<string, unknown> | null = null;
-  let groups: GroupRow[] = [];
-  let error: string | null = null;
-  try {
-    net = await apiGet("/v1/network");
-    groups = await apiGet("/v1/groups");
-  } catch (e) {
-    error = e instanceof Error ? e.message : "error";
-  }
+export default function NetworkPage() {
+  const { data: net, error } = usePoll<LocalNetwork>("/v1/local/network");
+  const { data: status } = usePoll<LocalStatus>("/v1/local/status", 5000);
 
   return (
     <div>
       <PageHeader
         title="Network"
-        subtitle="Control-plane topology. Workload traffic stays peer-to-peer."
+        subtitle="Local listen port, share process, and private groups. Workloads stay peer-to-peer."
       />
       {error ? (
         <Empty>{error}</Empty>
       ) : (
         <>
           <div className="mb-6 grid gap-4 sm:grid-cols-3">
-            <Stat label="Nodes" value={String(net?.nodes ?? 0)} />
-            <Stat label="Peers" value={String(net?.peers ?? 0)} />
-            <Stat label="Groups" value={String(net?.groups ?? 0)} />
+            <Stat label="Listen port" value={net?.listen_port ?? "—"} />
+            <Stat
+              label="Share process"
+              value={net?.share_running ? "running" : "stopped"}
+              hint={net?.share_pid ? `pid ${net.share_pid}` : undefined}
+            />
+            <Stat
+              label="Peers / groups"
+              value={`${status?.peers ?? 0} / ${net?.groups.length ?? 0}`}
+            />
           </div>
-          <h2 className="mb-3 font-display text-xl text-mist-100">Groups</h2>
-          {groups.length === 0 ? (
+          <h2 className="section-title mb-3">Groups</h2>
+          {!net || net.groups.length === 0 ? (
             <Empty>
-              No groups synced. Create with{" "}
-              <code className="text-mist-300">gpumesh group create research</code>
+              No groups. Create with <code>gpumesh group create research</code>
             </Empty>
           ) : (
             <div className="panel overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-white/10 text-xs uppercase text-mist-500">
+              <table className="data-table">
+                <thead>
                   <tr>
-                    <th className="px-4 py-3">Name</th>
-                    <th className="px-4 py-3">Members</th>
-                    <th className="px-4 py-3">ID</th>
+                    <th>Name</th>
+                    <th>Members</th>
+                    <th>ID</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {groups.map((g) => (
-                    <tr key={g.id} className="border-b border-white/5">
-                      <td className="px-4 py-3 text-mist-100">{g.name}</td>
-                      <td className="px-4 py-3 text-mist-300">{g.members}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-mist-500">
-                        {g.id}
-                      </td>
+                  {net.groups.map((g) => (
+                    <tr key={g.id}>
+                      <td className="font-medium text-mist-100">{g.name}</td>
+                      <td className="text-mist-300">{g.members}</td>
+                      <td className="font-mono text-xs text-mist-500">{g.id}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
+          {net?.home ? (
+            <p className="mt-6 text-xs text-mist-500">Home {net.home}</p>
+          ) : null}
         </>
       )}
     </div>

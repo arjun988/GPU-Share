@@ -19,21 +19,24 @@ Groups live in `~/.gpumesh/groups.json`. The scheduler probes paired members, fi
 
 ## Phase 6 — Dashboard
 
+Local operational console (logs, metrics, pair/connect/run) plus optional synced
+multi-node metadata.
+
 ```bash
-# Terminal A — API
+# Terminal A — API (Rust; required for /v1/local/*)
 cargo run -p gpumesh-control
 
 # Terminal B — UI
 cd dashboard && npm install && npm run dev
 
-# Terminal C — sync node metadata
-gpumesh config set rendezvous_url http://127.0.0.1:8080
-gpumesh sync
 gpumesh dashboard   # prints URLs
 ```
 
 Open http://127.0.0.1:3000
 
-Pages: Overview, My GPUs, Peers, Jobs, Network, Usage, Settings, Security.
+Pages: Overview, Connect, GPUs, Peers, Jobs, Logs, Network, Settings, Security.
 
-Control plane never executes workloads — metadata only (`/v1/sync`, `/v1/overview`, …).
+- **Local** (`/v1/local/*`): live NVML, `~/.gpumesh` peers/jobs/logs, pair, allow,
+  connect, run — no sync needed.
+- **Synced** (`/v1/sync`, `/v1/overview`, …): optional multi-node metadata store.
+  Control plane never runs GPU containers.
