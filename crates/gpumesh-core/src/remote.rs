@@ -310,6 +310,9 @@ pub async fn serve_peer_session(node: &MeshNode, conn: PeerConnection) -> Result
                 conn.send(Message::PeerInfo(node.peer_info_msg().await))
                     .await?;
             }
+            Message::DesktopRequest { prefer } => {
+                crate::desktop::handle_desktop_request(node, conn.clone(), prefer).await?;
+            }
             Message::FileOffer(offer) => match offer.direction {
                 FileDirection::Upload => {
                     let dest = upload_dest(&offer.path, &offer.transfer_id)?;

@@ -24,3 +24,4 @@ anyhow.workspace = true
 async-trait.workspace = true
 hex.workspace = true
 sha2.workspace = true
+quinn.workspace = true

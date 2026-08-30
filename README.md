@@ -123,6 +123,22 @@ The scheduler probes group members, skips busy / low-VRAM peers, and picks the b
 
 Same Wi‑Fi / LAN works with the addresses inside pairing codes. Across the internet you need reachable IPs, port forwarding for the listen port (default `47000` UDP), or `GPUMESH_RELAY`.
 
+## GPU desktop (apps on the host)
+
+Interactive use of the host GPU (Blender GUI, etc.) via an RDP/VNC tunnel:
+
+```bash
+# Host — enable Windows Remote Desktop (or Linux VNC), then:
+gpumesh desktop share
+gpumesh desktop allow bob-laptop
+
+# Client
+gpumesh desktop connect alice-pc
+# then: mstsc /v:127.0.0.1:13389
+```
+
+Scripts still use `gpumesh run` / `cp`. Details: [docs/gpu-desktop.md](./docs/gpu-desktop.md).
+
 ## Public GPU network (Phase 7)
 
 Publish **metadata only** — does not open your GPU to strangers.
@@ -178,4 +194,4 @@ dashboard/   Next.js + Tailwind UI
 docs/
 ```
 
-Docs: [PRD](./PRD.md) · [Two-machine demo](./docs/two-machine-demo.md) · [Phase 4](./docs/phase4-dx.md) · [Phases 5–6](./docs/phase5-6.md) · [Phase 7](./docs/phase7.md)
+Docs: [PRD](./PRD.md) · [Two-machine demo](./docs/two-machine-demo.md) · [Phase 4](./docs/phase4-dx.md) · [Phases 5–6](./docs/phase5-6.md) · [Phase 7](./docs/phase7.md) · [GPU desktop](./docs/gpu-desktop.md) · [Research: remote GPU for local apps](./docs/research.md)

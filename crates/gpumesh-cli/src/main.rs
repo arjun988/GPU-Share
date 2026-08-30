@@ -1,6 +1,7 @@
 //! GPUMesh CLI — Claude/Gemini-style developer experience (Phases 0–4).
 
 mod commands;
+mod desktop;
 mod doctor;
 mod group;
 mod jobfile;
@@ -95,6 +96,11 @@ pub(crate) enum Commands {
     Allow { peer: String },
     /// Deny a peer
     Deny { peer: String },
+    /// Interactive GPU desktop (RDP/VNC tunnel)
+    Desktop {
+        #[command(subcommand)]
+        action: desktop::DesktopCmd,
+    },
     /// Manage private GPU clusters (Phase 5)
     Group {
         #[command(subcommand)]

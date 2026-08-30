@@ -334,10 +334,13 @@ pub fn verify_public_listing(listing: &impl PublicListingPayload) -> Result<()> 
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AllowList {
-    /// Node IDs explicitly allowed.
+    /// Node IDs explicitly allowed to run jobs.
     pub allowed: HashSet<String>,
     /// Node IDs explicitly denied (takes precedence).
     pub denied: HashSet<String>,
+    /// Node IDs allowed to open interactive desktop sessions (separate from jobs).
+    #[serde(default)]
+    pub desktop_allowed: HashSet<String>,
 }
 
 impl AllowList {
@@ -348,15 +351,31 @@ impl AllowList {
         self.allowed.contains(node_id)
     }
 
+    pub fn is_desktop_allowed(&self, node_id: &str) -> bool {
+        if self.denied.contains(node_id) {
+            return false;
+        }
+        self.desktop_allowed.contains(node_id)
+    }
+
     pub fn allow(&mut self, node_id: impl Into<String>) {
         let id = node_id.into();
         self.denied.remove(&id);
         self.allowed.insert(id);
     }
 
+    pub fn allow_desktop(&mut self, node_id: impl Into<String>) {
+        let id = node_id.into();
+        self.denied.remove(&id);
+        self.desktop_allowed.insert(id.clone());
+        // Desktop peers are also job-allowed for convenience (scripts + apps).
+        self.allowed.insert(id);
+    }
+
     pub fn deny(&mut self, node_id: impl Into<String>) {
         let id = node_id.into();
         self.allowed.remove(&id);
+        self.desktop_allowed.remove(&id);
         self.denied.insert(id);
     }
 }

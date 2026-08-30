@@ -95,6 +95,8 @@ pub fn flush() {
 pub const AFTER_HELP: &str = "\
 Examples:
   gpumesh start
+  gpumesh desktop share
+  gpumesh desktop connect alice-pc
   gpumesh init --name my-pc
   gpumesh share
   gpumesh share --public --region us-west

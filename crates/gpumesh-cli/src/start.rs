@@ -25,6 +25,10 @@ enum Action {
     Pair,
     Peers,
     RunPeer,
+    DesktopShare,
+    DesktopConnect,
+    DesktopAllow,
+    DesktopDoctor,
     Status,
     Gpu,
     Doctor,
@@ -53,6 +57,11 @@ const MENU: &[Item] = &[
     Item::Action(Action::Pair),
     Item::Action(Action::Peers),
     Item::Action(Action::RunPeer),
+    Item::Header("Desktop"),
+    Item::Action(Action::DesktopShare),
+    Item::Action(Action::DesktopConnect),
+    Item::Action(Action::DesktopAllow),
+    Item::Action(Action::DesktopDoctor),
     Item::Action(Action::Status),
     Item::Action(Action::Gpu),
     Item::Header("Cluster"),
@@ -107,6 +116,10 @@ fn label(action: Action) -> &'static str {
         Action::Pair => "Pair with a peer",
         Action::Peers => "List peers",
         Action::RunPeer => "Run job on a peer",
+        Action::DesktopShare => "Share GPU desktop (RDP/VNC)",
+        Action::DesktopConnect => "Connect to peer desktop",
+        Action::DesktopAllow => "Allow peer for desktop",
+        Action::DesktopDoctor => "Desktop backend doctor",
         Action::Status => "Node status",
         Action::Gpu => "GPU inventory",
         Action::Doctor => "Doctor (diagnose setup)",
@@ -284,6 +297,21 @@ async fn dispatch_action(action: Action) -> Result<()> {
                 command,
             })
             .await
+        }
+        Action::DesktopShare => {
+            crate::desktop::dispatch(crate::desktop::DesktopCmd::Share).await
+        }
+        Action::DesktopConnect => {
+            let peer = prompt_string("Peer name")?;
+            crate::desktop::dispatch(crate::desktop::DesktopCmd::Connect { peer, port: None })
+                .await
+        }
+        Action::DesktopAllow => {
+            let peer = prompt_string("Peer name")?;
+            crate::desktop::dispatch(crate::desktop::DesktopCmd::Allow { peer }).await
+        }
+        Action::DesktopDoctor => {
+            crate::desktop::dispatch(crate::desktop::DesktopCmd::Doctor).await
         }
         Action::Status => commands::dispatch(Commands::Status).await,
         Action::Gpu => commands::dispatch(Commands::Gpu).await,

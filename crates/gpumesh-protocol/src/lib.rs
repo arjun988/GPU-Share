@@ -121,6 +121,25 @@ pub enum Message {
     Error {
         message: String,
     },
+    /// Client requests an interactive GPU desktop tunnel (separate from jobs).
+    DesktopRequest {
+        /// Preferred backends in order, e.g. ["rdp", "vnc", "sunshine"].
+        #[serde(default)]
+        prefer: Vec<String>,
+    },
+    DesktopOffer {
+        session_id: String,
+        backend: String,
+        /// Port on the provider localhost to tunnel to.
+        host_port: u16,
+        /// Suggested local port on the client (0 = ephemeral).
+        suggest_local_port: u16,
+        /// Human hint how to open the viewer.
+        viewer_hint: String,
+    },
+    DesktopReject {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

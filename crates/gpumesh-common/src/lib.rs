@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const PROTOCOL_MAJOR: u16 = 1;
-pub const PROTOCOL_MINOR: u16 = 1;
+pub const PROTOCOL_MINOR: u16 = 2;
 pub const DEFAULT_AGENT_PORT: u16 = 47000;
 pub const DEFAULT_IMAGE: &str = "nvidia/cuda:12.8.0-runtime-ubuntu22.04";
 pub const APP_DIR_NAME: &str = ".gpumesh";
@@ -139,6 +139,10 @@ pub struct NodeConfig {
     /// Harden Docker: drop caps, no-new-privileges, read-only rootfs.
     #[serde(default = "default_true")]
     pub docker_harden: bool,
+    /// Allow interactive desktop sessions (RDP/VNC tunnel). Off by default in config;
+    /// enabled live by `gpumesh desktop share`.
+    #[serde(default)]
+    pub desktop_sharing: bool,
 }
 
 fn default_true() -> bool {
@@ -172,6 +176,7 @@ impl Default for NodeConfig {
             ),
             allowed_images: default_allowed_images(),
             docker_harden: true,
+            desktop_sharing: false,
         }
     }
 }
