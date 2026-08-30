@@ -1,9 +1,10 @@
 # GPU desktop — current product vs remote desktop
 
-GPUMesh supports **two modes**:
+GPUMesh supports **three modes**:
 
 1. **Jobs (scripts)** — `gpumesh run` / `cp` (Phases 0–7)  
-2. **Desktop (apps)** — `gpumesh desktop` tunnels RDP/VNC so you can use the host GPU interactively
+2. **Desktop (apps)** — `gpumesh desktop` tunnels RDP/VNC so you can use the host GPU interactively  
+3. **Hybrid launcher** — `gpumesh app` packages a local project, runs it on the peer, and pulls outputs
 
 ---
 
@@ -118,7 +119,7 @@ Desktop is a **higher privilege** than jobs: full interactive access to the host
 | --- | --- |
 | WAN quality | Depends on RDP/VNC + network; use relay/`GPUMESH_RELAY` if needed |
 | Sunshine/Moonlight UDP | Not fully supported yet (TCP helper only); prefer RDP for apps |
-| Path B (local app → remote CUDA) | Not built — apps run **on the host** |
+| Path B (local app → remote CUDA) | Not built — use **`gpumesh app`** (process on host) or desktop |
 | Consent UI / idle timeout | Future (D2) |
 | Custom WebRTC encoder | Future; not required while RDP/VNC works |
 
@@ -136,11 +137,22 @@ gpumesh desktop connect <peer> --port 13389
 
 Also in `gpumesh start` under **Desktop**.
 
+Hybrid launcher (project stays local; process runs on the peer):
+
+```bash
+gpumesh app sync --peer alice-pc --dir ./proj
+gpumesh app run --peer alice-pc --dir ./train python train.py
+gpumesh app run --peer alice-pc --dir ./blend --out ./renders --desktop blender -b scene.blend -a
+gpumesh app pull --peer alice-pc --job <id> --dir ./out
+```
+
+Also in `gpumesh start` under **Apps (hybrid)**.
+
 ---
 
 ## Related
 
-- [Research: local apps on remote GPU](./research.md) — Path B (not built yet)
+- [Research: local apps on remote GPU](./research.md) — Path B remoting (not built); R1 hybrid is `gpumesh app`
 - [PRD](../PRD.md)
 - [Two-machine demo](./two-machine-demo.md) — job-only flow
 - [Architecture](./architecture.md)

@@ -16,6 +16,7 @@ use tracing::{info, warn};
 
 use crate::MeshNode;
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_remote_job(
     node: &MeshNode,
     peer: &str,
@@ -25,6 +26,7 @@ pub async fn run_remote_job(
     env: Vec<(String, String)>,
     job_id: Option<String>,
     gpu_memory_mb: Option<u64>,
+    pull_artifacts: Option<PathBuf>,
 ) -> Result<i32> {
     let cfg = node.config.read().await.clone();
     let image = image.unwrap_or(cfg.default_image.clone());
@@ -121,7 +123,40 @@ pub async fn run_remote_job(
         }
     }
     conn.close();
+
+    if let Some(dest) = pull_artifacts {
+        match pull_job_outputs(node, peer, &job_id, &dest).await {
+            Ok(()) => info!("pulled job {job_id} outputs to {}", dest.display()),
+            Err(e) if exit_code == 0 => return Err(e),
+            Err(e) => warn!("could not pull job outputs: {e}"),
+        }
+    }
+
     Ok(exit_code)
+}
+
+/// Download a completed job's `outputs.gpk` from the peer and unpack it into `dest`.
+pub async fn pull_job_outputs(
+    node: &MeshNode,
+    peer: &str,
+    job_id: &str,
+    dest: &Path,
+) -> Result<()> {
+    if !is_safe_job_id(job_id) {
+        return Err(GpuMeshError::Storage("invalid job id".into()));
+    }
+    std::fs::create_dir_all(dest)?;
+    let pack = dest.join(".gpumesh-outputs.gpk");
+    transfer_file_from_peer(
+        node,
+        peer,
+        &format!("jobs/{job_id}/outputs.gpk"),
+        &pack,
+    )
+    .await?;
+    unpack_archive(&pack, dest)?;
+    let _ = std::fs::remove_file(&pack);
+    Ok(())
 }
 
 pub async fn transfer_file_to_peer(
@@ -575,24 +610,72 @@ fn image_allowed(image: &str, allowed: &[String]) -> bool {
     })
 }
 
+fn is_safe_job_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn resolve_download_path(path: &str) -> Result<PathBuf> {
+    let clean = path.trim_start_matches(['/', '\\']).replace('\\', "/");
+    if clean.is_empty() || clean.contains("..") {
+        return Err(GpuMeshError::Storage(format!(
+            "unsafe download path rejected: {path}"
+        )));
+    }
+    let parts: Vec<&str> = clean.split('/').filter(|p| !p.is_empty()).collect();
+    if parts.len() == 3 && parts[0] == "jobs" && parts[2] == "outputs.gpk" {
+        if !is_safe_job_id(parts[1]) {
+            return Err(GpuMeshError::Storage("invalid job id".into()));
+        }
+        return Ok(StateStore::job_dir(parts[1]).join("outputs.gpk"));
+    }
+    if parts
+        .iter()
+        .any(|p| *p == ".." || *p == "." || p.contains(':'))
+    {
+        return Err(GpuMeshError::Storage(format!(
+            "unsafe download path rejected: {path}"
+        )));
+    }
+    let mut full = gpumesh_common::work_dir().join("incoming");
+    for part in parts {
+        full.push(part);
+    }
+    Ok(full)
+}
+
 async fn serve_download(conn: &PeerConnection, path: &str, transfer_id: &str) -> Result<()> {
-    let base = gpumesh_common::work_dir().join("incoming");
-    let clean = path.trim_start_matches('/').replace("..", "_");
-    let full = base.join(&clean);
-    if !full.exists() {
-        // also try absolute-looking under work dir
-        let alt = gpumesh_common::work_dir().join(&clean);
-        if !alt.exists() {
+    let full = match resolve_download_path(path) {
+        Ok(p) => p,
+        Err(e) => {
             conn.send(Message::FileAck {
                 transfer_id: transfer_id.to_string(),
                 ok: false,
-                error: Some(format!("file not found: {path}")),
+                error: Some(e.to_string()),
                 resume_from: None,
             })
             .await?;
             return Ok(());
         }
-        return send_file_chunks(conn, transfer_id, path, &alt).await;
+    };
+    if !full.exists() {
+        // Fallback: relative path under the work directory (legacy).
+        let clean = path.trim_start_matches('/').replace("..", "_");
+        let alt = gpumesh_common::work_dir().join(&clean);
+        if alt.exists() {
+            return send_file_chunks(conn, transfer_id, path, &alt).await;
+        }
+        conn.send(Message::FileAck {
+            transfer_id: transfer_id.to_string(),
+            ok: false,
+            error: Some(format!("file not found: {path}")),
+            resume_from: None,
+        })
+        .await?;
+        return Ok(());
     }
     send_file_chunks(conn, transfer_id, path, &full).await
 }
@@ -657,6 +740,7 @@ async fn execute_remote_job(
     let job_dir = StateStore::ensure_job_dir(&req.job_id)?;
     let work = job_dir.join("workspace");
     std::fs::create_dir_all(&work)?;
+    let work_for_pack = work.clone();
 
     if let Some(tid) = &req.transfer_id {
         let pack = StateStore::job_dir(tid).join("workload.gpk");
@@ -728,6 +812,17 @@ async fn execute_remote_job(
     };
 
     let (_handle, result) = runtime.run_job(job_req, tx).await?;
+
+    // Pack before the terminal status so the client can pull immediately after.
+    let out = job_dir.join("outputs.gpk");
+    match package_workdir(&work_for_pack, &out) {
+        Ok(m) => info!(
+            "packed job {} outputs: {} files, {} bytes",
+            result.job_id, m.files.len(), m.total_bytes
+        ),
+        Err(e) => warn!("failed to pack job {} outputs: {e}", result.job_id),
+    }
+
     conn.send(Message::JobStatus {
         job_id: result.job_id,
         state: result.state,
@@ -778,4 +873,29 @@ pub async fn run_local_job(
     };
     let (_h, result) = node.runtime.run_job(req, tx).await?;
     Ok(result.exit_code.unwrap_or(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn job_id_rejects_path_injection() {
+        assert!(is_safe_job_id("abc123def456"));
+        assert!(!is_safe_job_id(""));
+        assert!(!is_safe_job_id("../etc"));
+        assert!(!is_safe_job_id("a/b"));
+        assert!(!is_safe_job_id("a\\b"));
+    }
+
+    #[test]
+    fn download_path_rejects_traversal() {
+        assert!(resolve_download_path("../secret").is_err());
+        assert!(resolve_download_path("jobs/../outputs.gpk").is_err());
+        assert!(resolve_download_path("jobs/not valid/outputs.gpk").is_err());
+        let ok = resolve_download_path("jobs/abc123def456/outputs.gpk").unwrap();
+        assert!(ok.ends_with("outputs.gpk"));
+        let incoming = resolve_download_path("apps/proj.gpk").unwrap();
+        assert!(incoming.ends_with("proj.gpk"));
+    }
 }

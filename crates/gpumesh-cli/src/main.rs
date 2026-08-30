@@ -1,5 +1,6 @@
 //! GPUMesh CLI — Claude/Gemini-style developer experience (Phases 0–4).
 
+mod app;
 mod commands;
 mod desktop;
 mod doctor;
@@ -100,6 +101,11 @@ pub(crate) enum Commands {
     Desktop {
         #[command(subcommand)]
         action: desktop::DesktopCmd,
+    },
+    /// Sync a local project and run it on a peer GPU (process runs on the peer)
+    App {
+        #[command(subcommand)]
+        action: app::AppCmd,
     },
     /// Manage private GPU clusters (Phase 5)
     Group {

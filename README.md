@@ -137,7 +137,20 @@ gpumesh desktop connect alice-pc
 # then: mstsc /v:127.0.0.1:13389
 ```
 
-Scripts still use `gpumesh run` / `cp`. Details: [docs/gpu-desktop.md](./docs/gpu-desktop.md).
+Scripts still use `gpumesh run` / `cp`. Project folders with honest remote execution: `gpumesh app`. Details: [docs/gpu-desktop.md](./docs/gpu-desktop.md) · [docs/research.md](./docs/research.md).
+
+## Hybrid app launcher (`gpumesh app`)
+
+Keep the project on your machine; the process runs **on the peer** next to their GPU. This is not CUDA remoting of a local `.exe`.
+
+```bash
+gpumesh app sync --peer alice-pc --dir ./proj
+gpumesh app run --peer alice-pc --dir ./train python train.py
+gpumesh app run --peer alice-pc --dir ./blend --out ./renders blender -b scene.blend -a
+gpumesh app pull --peer alice-pc --job <id> --dir ./out
+# optional GUI session on the host:
+gpumesh app run --peer alice-pc --dir ./proj --desktop
+```
 
 ## Public GPU network (Phase 7)
 

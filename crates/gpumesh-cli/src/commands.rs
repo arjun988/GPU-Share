@@ -196,6 +196,7 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
             Ok(())
         }
         Commands::Desktop { action } => crate::desktop::dispatch(action).await,
+        Commands::App { action } => crate::app::dispatch(action).await,
         Commands::Group { action } => crate::group::dispatch(action).await,
         Commands::Sync => sync_to_control_plane().await,
         Commands::Dashboard => {
@@ -333,6 +334,7 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
                         env.clone(),
                         Some(job_id_hint.clone()),
                         requested_gpu_memory_mb,
+                        None,
                     )
                     .await
                 } else {
@@ -515,6 +517,7 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
                 vec![shell],
                 PathBuf::from("."),
                 Vec::new(),
+                None,
                 None,
                 None,
             )

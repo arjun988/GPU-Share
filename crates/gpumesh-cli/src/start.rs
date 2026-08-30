@@ -29,6 +29,9 @@ enum Action {
     DesktopConnect,
     DesktopAllow,
     DesktopDoctor,
+    AppSync,
+    AppRun,
+    AppPull,
     Status,
     Gpu,
     Doctor,
@@ -62,6 +65,10 @@ const MENU: &[Item] = &[
     Item::Action(Action::DesktopConnect),
     Item::Action(Action::DesktopAllow),
     Item::Action(Action::DesktopDoctor),
+    Item::Header("Apps (hybrid)"),
+    Item::Action(Action::AppSync),
+    Item::Action(Action::AppRun),
+    Item::Action(Action::AppPull),
     Item::Action(Action::Status),
     Item::Action(Action::Gpu),
     Item::Header("Cluster"),
@@ -120,6 +127,9 @@ fn label(action: Action) -> &'static str {
         Action::DesktopConnect => "Connect to peer desktop",
         Action::DesktopAllow => "Allow peer for desktop",
         Action::DesktopDoctor => "Desktop backend doctor",
+        Action::AppSync => "Sync project to a peer",
+        Action::AppRun => "Run project on a peer GPU",
+        Action::AppPull => "Pull job outputs from a peer",
         Action::Status => "Node status",
         Action::Gpu => "GPU inventory",
         Action::Doctor => "Doctor (diagnose setup)",
@@ -312,6 +322,56 @@ async fn dispatch_action(action: Action) -> Result<()> {
         }
         Action::DesktopDoctor => {
             crate::desktop::dispatch(crate::desktop::DesktopCmd::Doctor).await
+        }
+        Action::AppSync => {
+            let peer = prompt_string("Peer name")?;
+            let dir = prompt_string_default("Project directory", ".")?;
+            commands::dispatch(Commands::App {
+                action: crate::app::AppCmd::Sync {
+                    peer,
+                    dir,
+                    name: None,
+                },
+            })
+            .await
+        }
+        Action::AppRun => {
+            let peer = prompt_string("Peer name")?;
+            let dir = prompt_string_default("Project directory", ".")?;
+            let cmdline = prompt_string_default("Command", "python train.py")?;
+            let command = shell_words(&cmdline);
+            let desktop = Confirm::with_theme(&theme())
+                .with_prompt("Also print GPU desktop connect hint?")
+                .default(false)
+                .interact()?;
+            commands::dispatch(Commands::App {
+                action: crate::app::AppCmd::Run {
+                    peer: Some(peer),
+                    group: None,
+                    gpu_memory: None,
+                    image: None,
+                    env: vec![],
+                    dir,
+                    out: None,
+                    desktop,
+                    command,
+                },
+            })
+            .await
+        }
+        Action::AppPull => {
+            let peer = prompt_string("Peer name")?;
+            let job = prompt_string_default("Job id (empty = latest for peer)", "")?;
+            let dir = prompt_string_default("Output directory", "./gpumesh-out")?;
+            commands::dispatch(Commands::App {
+                action: crate::app::AppCmd::Pull {
+                    peer,
+                    job: if job.is_empty() { None } else { Some(job) },
+                    remote: None,
+                    dir,
+                },
+            })
+            .await
         }
         Action::Status => commands::dispatch(Commands::Status).await,
         Action::Gpu => commands::dispatch(Commands::Gpu).await,

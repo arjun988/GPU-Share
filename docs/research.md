@@ -1,7 +1,7 @@
 # Research: run *local* apps on a *remote* peer GPU
 
-**Status:** research only — **not implemented** in GPUMesh today.  
-**Related:** [gpu-desktop.md](./gpu-desktop.md) (what we *did* ship: remote desktop / RDP–VNC tunnel).
+**Status:** Path B CUDA remoting is **not** built. **R1 hybrid launcher is shipped** (`gpumesh app`).  
+**Related:** [gpu-desktop.md](./gpu-desktop.md) (remote desktop / RDP–VNC tunnel).
 
 ---
 
@@ -17,9 +17,10 @@
 | --- | --- | --- | --- |
 | **Jobs** (`gpumesh run`) | Host (Docker) | Host | Shipped |
 | **Desktop** (`gpumesh desktop`) | Host (full OS session) | Host | Shipped (RDP/VNC tunnel) |
-| **GPU remoting (this doc)** | **Client** | **Host** | **Not built** |
+| **Hybrid launcher** (`gpumesh app`) | Host (Docker / optional desktop) | Host | **Shipped (R1)** |
+| **GPU remoting (this doc)** | **Client** | **Host** | **Not built (R2)** |
 
-This document is about the third row only.
+This document is about the **GPU remoting** row (R2). R1 hybrid is a product workaround, not remoting.
 
 ---
 
@@ -194,7 +195,7 @@ Client: gpumesh app-run blender
 **Feels like:** “I launched my project against their GPU.”  
 **Actually is:** orchestrated remote execution + optional desktop.
 
-This reuses **100% of Phases 0–7 + desktop** with much less risk.
+**Shipped as** `gpumesh app sync` / `run` / `pull`.
 
 ### Option 4 — Vendor stack integration
 
@@ -252,11 +253,19 @@ Control plane: metadata only — **never** proxy CUDA traffic.
 - Clarify three modes: jobs / desktop / remoting  
 - Do not advertise remoting as shipped  
 
-### R1 — Hybrid launcher (highest ROI)
+### R1 — Hybrid launcher (highest ROI) — **done**
 
-- `gpumesh app sync` / `gpumesh app run --peer … --bin …`  
-- Auto `cp` + remote start + optional desktop attach  
-- Covers Blender projects, Unity projects, training folders with honest UX  
+```bash
+gpumesh app sync --peer alice-pc --dir ./proj
+gpumesh app run --peer alice-pc --dir ./train python train.py
+gpumesh app run --peer alice-pc --dir ./blend --out ./renders --desktop blender -b scene.blend -a
+gpumesh app pull --peer alice-pc --job <id> --dir ./out
+```
+
+- Packages the local directory (`.gpumeshignore`), runs the command **on the peer** next to the GPU  
+- `--out` / `app pull` fetches `outputs.gpk` from the job workspace  
+- `--desktop` prints `gpumesh desktop connect <peer>` (GUI still runs on the host)  
+- Honest banner: this is **not** a local `.exe` using a remote CUDA device  
 
 ### R2 — CUDA remoting spike (LAN only)
 
@@ -286,7 +295,7 @@ Control plane: metadata only — **never** proxy CUDA traffic.
 | Train / scripts on peer GPU | **Already: `gpumesh run`** |
 | Use Blender/Unity GUI on peer GPU | **Already: `gpumesh desktop`** (app on host) |
 | Keep `.exe` local, GPU remote, any app | **Research; likely years / vendor tech** |
-| Keep project local-feeling, GPU remote | **R1 hybrid launcher** |
+| Keep project local-feeling, GPU remote | **Shipped: `gpumesh app` (R1)** |
 | CUDA-only tools, LAN | **R2 remoting spike** |
 
 ---
@@ -306,10 +315,10 @@ Control plane: metadata only — **never** proxy CUDA traffic.
 
 | Question | Answer |
 | --- | --- |
-| Can GPUMesh do local-app → remote-GPU today? | **No** |
-| Can users still use peer GPUs for apps today? | **Yes** — via **desktop** (app on host) or **jobs** (scripts/containers) |
-| Can we eventually do true remoting? | **Partially** — start with **CUDA LAN spike** + **hybrid launchers**; do not promise universal local GUI remoting |
-| Best next product step | **R1 hybrid** (sync + remote run + desktop) while researching **R2 CUDA remoting** |
+| Can GPUMesh do local-app → remote-GPU today? | **No** (process still runs on the host) |
+| Can users still use peer GPUs for apps today? | **Yes** — **`gpumesh app`** (hybrid), **desktop**, or **jobs** |
+| Can we eventually do true remoting? | **Partially** — next is **R2 CUDA LAN spike**; do not promise universal local GUI remoting |
+| Best next product step | **R2 CUDA remoting spike** (LAN only) |
 
 ---
 
@@ -323,4 +332,4 @@ Control plane: metadata only — **never** proxy CUDA traffic.
 
 ---
 
-*Last updated: research draft for Path B (local process, remote GPU). Implementation not started.*
+*Last updated: R1 hybrid launcher shipped (`gpumesh app`). Path B CUDA remoting still research-only.*
