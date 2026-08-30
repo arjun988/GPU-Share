@@ -6,6 +6,7 @@ import { usePoll } from "@/lib/use-poll";
 import {
   Badge,
   Btn,
+  CardHeader,
   Empty,
   Field,
   PageHeader,
@@ -93,60 +94,63 @@ export default function ConnectPage() {
     <div>
       <PageHeader
         title="Connect"
-        subtitle="Pair peers, allow jobs/desktop/CUDA remoting, and test connectivity from this machine."
+        subtitle="Pair peers and manage job, desktop, and CUDA access."
+        actions={
+          <Btn disabled={busy} onClick={() => void probe()}>
+            Probe live
+          </Btn>
+        }
       />
 
       {error ? (
-        <div className="mb-6">
+        <div className="mb-4">
           <Empty>{error}</Empty>
         </div>
       ) : null}
       {msg ? <p className="notice">{msg}</p> : null}
 
-      <div className="mb-8 grid gap-4 lg:grid-cols-2">
-        <div className="panel space-y-4 p-5">
-          <h2 className="section-title">Your pair code</h2>
-          <p className="text-sm text-mist-500">
-            Share out-of-band. Peer runs pair with this code (mutual pair
-            recommended).
-          </p>
+      <div className="mb-6 grid gap-4 lg:grid-cols-2">
+        <div className="panel p-5">
+          <CardHeader
+            title="Your pair code"
+            description="Share out-of-band for mutual pairing"
+          />
           <Btn kind="primary" disabled={busy} onClick={() => void showPairCode()}>
             Generate code
           </Btn>
-          {myCode ? <pre className="code-block">{myCode}</pre> : null}
+          {myCode ? <pre className="code-block mt-4">{myCode}</pre> : null}
         </div>
 
-        <form className="panel space-y-4 p-5" onSubmit={onPair}>
-          <h2 className="section-title">Pair with code</h2>
+        <form className="panel p-5" onSubmit={onPair}>
+          <CardHeader
+            title="Pair with code"
+            description="Paste a peer’s pairing code"
+          />
           <Field label="Peer code">
             <textarea
-              className={inputClass + " min-h-[5rem] font-mono text-xs"}
+              className={inputClass + " min-h-[5.5rem] font-mono text-xs"}
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder="Paste pairing code"
               required
             />
           </Field>
-          <Btn type="submit" kind="primary" disabled={busy || !code.trim()}>
-            Pair
-          </Btn>
+          <div className="mt-4">
+            <Btn type="submit" kind="primary" disabled={busy || !code.trim()}>
+              Pair
+            </Btn>
+          </div>
         </form>
       </div>
 
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="section-title">Peers</h2>
-        <Btn disabled={busy} onClick={() => void probe()}>
-          Probe live
-        </Btn>
-      </div>
-
+      <h2 className="section-title mb-3">Peers</h2>
       {!peers || peers.length === 0 ? (
         <Empty>No paired peers yet.</Empty>
       ) : (
         <div className="space-y-3">
           {peers.map((p) => (
             <div key={p.node_id} className="panel p-5">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-base font-semibold text-mist-100">
                     {p.node_name}
@@ -155,7 +159,7 @@ export default function ConnectPage() {
                     {p.node_id_short} · seen {fmtAgo(p.last_seen)}
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-1.5">
                   <Badge tone={p.allowed ? "ok" : "bad"}>
                     jobs {p.allowed ? "allowed" : "denied"}
                   </Badge>
@@ -183,7 +187,7 @@ export default function ConnectPage() {
                   {p.addrs.join(" · ")}
                 </p>
               ) : null}
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-4 flex flex-wrap gap-2 border-t border-line pt-4">
                 <Btn
                   kind="primary"
                   disabled={busy}

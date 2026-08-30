@@ -8,7 +8,14 @@ import {
   type LocalJob,
   type LocalStatus,
 } from "@/lib/api";
-import { Badge, Empty, PageHeader, Stat, UtilBar } from "@/components/ui";
+import {
+  Badge,
+  CardHeader,
+  Empty,
+  PageHeader,
+  Stat,
+  UtilBar,
+} from "@/components/ui";
 
 export default function OverviewPage() {
   const { data: status, error, loading } = usePoll<LocalStatus>(
@@ -60,7 +67,8 @@ export default function OverviewPage() {
         title="Overview"
         subtitle={`${status?.node_name ?? "node"} · ${status?.node_id_short ?? ""} · port ${status?.listen_port ?? "—"}`}
       />
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat
           label="GPUs"
           value={gpus.length}
@@ -70,11 +78,7 @@ export default function OverviewPage() {
               : "No NVIDIA GPU detected"
           }
         />
-        <Stat
-          label="Peers"
-          value={status?.peers ?? 0}
-          hint="Paired in ~/.gpumesh"
-        />
+        <Stat label="Peers" value={status?.peers ?? 0} hint="Paired peers" />
         <Stat
           label="Jobs running"
           value={status?.jobs_running ?? 0}
@@ -82,7 +86,7 @@ export default function OverviewPage() {
         />
         <Stat
           label="Share"
-          value={status?.share_running ? "on" : "off"}
+          value={status?.share_running ? "On" : "Off"}
           hint={
             status?.share_running
               ? `pid ${status.share_pid ?? "?"}`
@@ -91,80 +95,118 @@ export default function OverviewPage() {
         />
       </div>
 
-      {gpus.length > 0 ? (
-        <section className="mt-8">
-          <div className="mb-3 flex items-baseline justify-between">
-            <h2 className="section-title">GPUs</h2>
-            <Link
-              href="/gpus"
-              className="text-xs font-medium text-accent hover:text-accent-dim"
-            >
-              Metrics
-            </Link>
-          </div>
-          <div className="space-y-3">
-            {gpus.map((g) => (
-              <div key={g.index} className="panel p-4">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <p className="font-medium text-mist-100">{g.name}</p>
-                  <Badge tone={gpuUtil(g) > 70 ? "warn" : "ok"}>
-                    {gpuUtil(g)}% util
-                    {g.temperature_c != null ? ` · ${g.temperature_c}°C` : ""}
-                  </Badge>
+      <div className="mt-6 grid gap-4 lg:grid-cols-5">
+        <section className="panel p-5 lg:col-span-3">
+          <CardHeader
+            title="GPU utilization"
+            action={
+              <Link href="/gpus" className="text-xs font-medium">
+                Details
+              </Link>
+            }
+          />
+          {gpus.length === 0 ? (
+            <p className="py-8 text-center text-sm text-mist-500">
+              No NVIDIA GPU detected.
+            </p>
+          ) : (
+            <div className="space-y-4">
+              {gpus.map((g) => (
+                <div key={g.index}>
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="text-sm font-medium text-mist-100">{g.name}</p>
+                    <Badge tone={gpuUtil(g) > 70 ? "warn" : "ok"}>
+                      {gpuUtil(g)}%
+                      {g.temperature_c != null ? ` · ${g.temperature_c}°C` : ""}
+                    </Badge>
+                  </div>
+                  <UtilBar pct={gpuUtil(g)} />
+                  <p className="mt-2 text-xs text-mist-500">
+                    VRAM {g.vram_used_mb}/{g.vram_total_mb} MB ({vramPct(g)}%)
+                  </p>
+                  <UtilBar pct={vramPct(g)} />
                 </div>
-                <UtilBar pct={gpuUtil(g)} />
-                <p className="mt-3 text-xs text-mist-500">
-                  VRAM {g.vram_used_mb} / {g.vram_total_mb} MB ({vramPct(g)}%)
-                </p>
-                <UtilBar pct={vramPct(g)} />
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </section>
-      ) : null}
 
-      <section className="mt-8">
-        <div className="mb-3 flex items-baseline justify-between">
+        <section className="panel p-5 lg:col-span-2">
+          <CardHeader
+            title="Node"
+            description="Local identity and share state"
+          />
+          <dl className="space-y-3 text-sm">
+            <Row k="Name" v={status?.node_name ?? "—"} />
+            <Row k="ID" v={status?.node_id_short ?? "—"} mono />
+            <Row k="Port" v={String(status?.listen_port ?? "—")} />
+            <Row
+              k="Share"
+              v={status?.share_running ? "Running" : "Stopped"}
+            />
+            <Row k="Home" v={status?.home ?? "—"} mono />
+          </dl>
+        </section>
+      </div>
+
+      <section className="panel mt-4 overflow-hidden">
+        <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
           <h2 className="section-title">Recent jobs</h2>
-          <Link
-            href="/jobs"
-            className="text-xs font-medium text-accent hover:text-accent-dim"
-          >
-            All jobs
+          <Link href="/jobs" className="text-xs font-medium">
+            View all
           </Link>
         </div>
         {recent.length === 0 ? (
-          <Empty>
+          <p className="px-5 py-10 text-center text-sm text-mist-500">
             No jobs yet. Use <Link href="/jobs">Jobs</Link> or{" "}
             <Link href="/connect">Connect</Link>.
-          </Empty>
+          </p>
         ) : (
-          <div className="panel overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Job</th>
-                  <th>Peer</th>
-                  <th>State</th>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Job</th>
+                <th>Peer</th>
+                <th>State</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recent.map((j) => (
+                <tr key={j.job_id}>
+                  <td className="font-mono text-mist-100">{j.job_id}</td>
+                  <td className="text-mist-300">{j.peer ?? "—"}</td>
+                  <td className="text-mist-300">{j.state}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {recent.map((j) => (
-                  <tr key={j.job_id}>
-                    <td className="font-mono text-mist-100">{j.job_id}</td>
-                    <td className="text-mist-300">{j.peer ?? "—"}</td>
-                    <td className="text-mist-300">{j.state}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
         )}
       </section>
 
-      <p className="mt-6 text-xs text-mist-500">
+      <p className="mt-4 text-xs text-mist-500">
         Updated {status?.updated_at ?? "—"}
       </p>
+    </div>
+  );
+}
+
+function Row({
+  k,
+  v,
+  mono,
+}: {
+  k: string;
+  v: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex justify-between gap-3 border-b border-line pb-3 last:border-0 last:pb-0">
+      <dt className="text-mist-500">{k}</dt>
+      <dd
+        className={`truncate text-right text-mist-100 ${mono ? "font-mono text-xs" : "font-medium"}`}
+      >
+        {v}
+      </dd>
     </div>
   );
 }

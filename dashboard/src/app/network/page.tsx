@@ -12,17 +12,17 @@ export default function NetworkPage() {
     <div>
       <PageHeader
         title="Network"
-        subtitle="Local listen port, share process, and private groups. Workloads stay peer-to-peer."
+        subtitle="Listen port, share process, and private groups."
       />
       {error ? (
         <Empty>{error}</Empty>
       ) : (
         <>
-          <div className="mb-6 grid gap-4 sm:grid-cols-3">
+          <div className="mb-6 grid gap-3 sm:grid-cols-3">
             <Stat label="Listen port" value={net?.listen_port ?? "—"} />
             <Stat
               label="Share process"
-              value={net?.share_running ? "running" : "stopped"}
+              value={net?.share_running ? "Running" : "Stopped"}
               hint={net?.share_pid ? `pid ${net.share_pid}` : undefined}
             />
             <Stat
@@ -30,13 +30,16 @@ export default function NetworkPage() {
               value={`${status?.peers ?? 0} / ${net?.groups.length ?? 0}`}
             />
           </div>
-          <h2 className="section-title mb-3">Groups</h2>
-          {!net || net.groups.length === 0 ? (
-            <Empty>
-              No groups. Create with <code>gpumesh group create research</code>
-            </Empty>
-          ) : (
-            <div className="panel overflow-x-auto">
+          <div className="panel overflow-hidden">
+            <div className="border-b border-line px-5 py-3.5">
+              <h2 className="section-title">Groups</h2>
+            </div>
+            {!net || net.groups.length === 0 ? (
+              <p className="px-5 py-10 text-center text-sm text-mist-500">
+                No groups. Create with{" "}
+                <code>gpumesh group create research</code>
+              </p>
+            ) : (
               <table className="data-table">
                 <thead>
                   <tr>
@@ -55,10 +58,10 @@ export default function NetworkPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
+            )}
+          </div>
           {net?.home ? (
-            <p className="mt-6 text-xs text-mist-500">Home {net.home}</p>
+            <p className="mt-4 text-xs text-mist-500">Home {net.home}</p>
           ) : null}
         </>
       )}

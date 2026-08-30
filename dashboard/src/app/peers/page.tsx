@@ -12,7 +12,15 @@ export default function PeersPage() {
     <div>
       <PageHeader
         title="Peers"
-        subtitle="Paired nodes on this machine. Manage allowlists on Connect."
+        subtitle="Paired nodes stored on this machine."
+        actions={
+          <Link
+            href="/connect"
+            className="inline-flex h-9 items-center rounded-md bg-accent px-3.5 text-sm font-medium text-white hover:bg-accent-dim"
+          >
+            Manage access
+          </Link>
+        }
       />
       {error ? (
         <Empty>{error}</Empty>
@@ -21,7 +29,7 @@ export default function PeersPage() {
           No peers. <Link href="/connect">Pair a peer</Link>.
         </Empty>
       ) : (
-        <div className="panel overflow-x-auto">
+        <div className="panel overflow-hidden">
           <table className="data-table">
             <thead>
               <tr>

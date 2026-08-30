@@ -7,6 +7,7 @@ import { LogPane } from "@/components/log-pane";
 import {
   Badge,
   Btn,
+  CardHeader,
   Empty,
   Field,
   PageHeader,
@@ -56,61 +57,63 @@ export default function JobsPage() {
     <div>
       <PageHeader
         title="Jobs"
-        subtitle="Local job history, live logs, and remote run from this dashboard."
+        subtitle="Run remote work and follow job history from this node."
       />
 
       {msg ? <p className="notice">{msg}</p> : null}
 
-      <form
-        className="panel mb-8 grid gap-4 p-5 md:grid-cols-2"
-        onSubmit={onRun}
-      >
-        <h2 className="section-title md:col-span-2">Run on peer</h2>
-        <Field label="Peer">
-          <input
-            className={inputClass}
-            value={peer}
-            onChange={(e) => setPeer(e.target.value)}
-            placeholder="bob"
-            required
-          />
-        </Field>
-        <Field label="Image (optional)">
-          <input
-            className={inputClass}
-            value={image}
-            onChange={(e) => setImage(e.target.value)}
-            placeholder="default CUDA image"
-          />
-        </Field>
-        <Field label="Command">
-          <input
-            className={inputClass}
-            value={command}
-            onChange={(e) => setCommand(e.target.value)}
-            required
-          />
-        </Field>
-        <Field label="GPU memory (optional)">
-          <input
-            className={inputClass}
-            value={gpuMemory}
-            onChange={(e) => setGpuMemory(e.target.value)}
-            placeholder="8GB"
-          />
-        </Field>
-        <Field label="Workdir on this machine (optional)">
-          <input
-            className={inputClass}
-            value={workdir}
-            onChange={(e) => setWorkdir(e.target.value)}
-            placeholder="/path/to/project"
-          />
-        </Field>
-        <div className="flex items-end">
-          <Btn type="submit" kind="primary" disabled={busy}>
-            Run
-          </Btn>
+      <form className="panel mb-6 p-5" onSubmit={onRun}>
+        <CardHeader
+          title="Run on peer"
+          description="Packages workdir (or empty) and dials the peer"
+        />
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Peer">
+            <input
+              className={inputClass}
+              value={peer}
+              onChange={(e) => setPeer(e.target.value)}
+              placeholder="bob"
+              required
+            />
+          </Field>
+          <Field label="Image (optional)">
+            <input
+              className={inputClass}
+              value={image}
+              onChange={(e) => setImage(e.target.value)}
+              placeholder="default CUDA image"
+            />
+          </Field>
+          <Field label="Command">
+            <input
+              className={inputClass}
+              value={command}
+              onChange={(e) => setCommand(e.target.value)}
+              required
+            />
+          </Field>
+          <Field label="GPU memory (optional)">
+            <input
+              className={inputClass}
+              value={gpuMemory}
+              onChange={(e) => setGpuMemory(e.target.value)}
+              placeholder="8GB"
+            />
+          </Field>
+          <Field label="Workdir on this machine (optional)">
+            <input
+              className={inputClass}
+              value={workdir}
+              onChange={(e) => setWorkdir(e.target.value)}
+              placeholder="/path/to/project"
+            />
+          </Field>
+          <div className="flex items-end">
+            <Btn type="submit" kind="primary" disabled={busy}>
+              Run
+            </Btn>
+          </div>
         </div>
       </form>
 
@@ -119,8 +122,11 @@ export default function JobsPage() {
       ) : !jobs || jobs.length === 0 ? (
         <Empty>No jobs yet.</Empty>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <div className="panel overflow-x-auto">
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="panel overflow-hidden">
+            <div className="border-b border-line px-4 py-3">
+              <h2 className="section-title">History</h2>
+            </div>
             <table className="data-table">
               <thead>
                 <tr>
@@ -133,8 +139,8 @@ export default function JobsPage() {
                 {jobs.map((j) => (
                   <tr
                     key={j.job_id}
-                    className={`cursor-pointer hover:bg-ink-700 ${
-                      selected === j.job_id ? "bg-accent-soft" : ""
+                    className={`cursor-pointer ${
+                      selected === j.job_id ? "!bg-accent-soft" : ""
                     }`}
                     onClick={() => setSelected(j.job_id)}
                   >
@@ -158,7 +164,7 @@ export default function JobsPage() {
               </tbody>
             </table>
           </div>
-          <div>
+          <div className="panel p-4">
             <h2 className="section-title mb-3">
               {selected ? `Log · ${selected}` : "Job log"}
             </h2>

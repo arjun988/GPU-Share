@@ -1,39 +1,42 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
+  darkMode: "class",
   content: ["./src/**/*.{js,ts,jsx,tsx,mdx}"],
   theme: {
     extend: {
       colors: {
-        canvas: "#F3F5F8",
-        line: "#E2E8F0",
+        canvas: "var(--canvas)",
+        surface: "var(--surface)",
+        fill: "var(--fill)",
+        line: "var(--line)",
         ink: {
-          950: "#0B1220",
-          900: "#1E293B",
-          800: "#FFFFFF",
-          700: "#F8FAFC",
-          100: "#EEF2F6",
+          950: "var(--ink-950)",
+          900: "var(--ink-900)",
+          800: "var(--surface)",
+          700: "var(--fill)",
+          100: "var(--fill-strong)",
         },
         mist: {
-          100: "#0F172A",
-          300: "#334155",
-          500: "#64748B",
+          100: "var(--text)",
+          300: "var(--text-secondary)",
+          500: "var(--text-muted)",
         },
         accent: {
-          DEFAULT: "#0B5CAB",
-          dim: "#094A8A",
-          soft: "#E8F1F8",
+          DEFAULT: "var(--accent)",
+          dim: "var(--accent-dim)",
+          soft: "var(--accent-soft)",
         },
         ok: {
-          DEFAULT: "#0F766E",
-          soft: "#E6F4F1",
+          DEFAULT: "var(--ok)",
+          soft: "var(--ok-soft)",
         },
         warn: {
-          DEFAULT: "#B45309",
-          soft: "#FEF3C7",
+          DEFAULT: "var(--warn)",
+          soft: "var(--warn-soft)",
         },
         bad: {
-          DEFAULT: "#B91C1C",
-          soft: "#FEE2E2",
+          DEFAULT: "var(--bad)",
+          soft: "var(--bad-soft)",
         },
       },
       fontFamily: {
@@ -42,7 +45,11 @@ module.exports = {
         mono: ["var(--font-mono)", "ui-monospace", "monospace"],
       },
       boxShadow: {
-        panel: "0 1px 2px rgba(15, 23, 42, 0.04)",
+        panel: "var(--shadow-panel)",
+        sidebar: "var(--shadow-sidebar)",
+      },
+      width: {
+        sidebar: "16.5rem",
       },
     },
   },

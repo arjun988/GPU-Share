@@ -7,19 +7,19 @@ export default function SecurityPage() {
         title="Security"
         subtitle="How GPUMesh keeps remote access sandboxed."
       />
-      <div className="panel space-y-5 p-6 text-sm leading-relaxed text-mist-300">
-        <p>
+      <div className="panel p-6">
+        <p className="text-sm leading-relaxed text-mist-300">
           Remote users never receive an unrestricted host shell. The path is
           always:
         </p>
-        <pre className="code-block">
+        <pre className="code-block mt-4">
 {`Remote user
   → authenticated P2P (Ed25519 + QUIC)
   → job sandbox
   → Docker container
   → NVIDIA GPU`}
         </pre>
-        <ul className="list-disc space-y-2 pl-5">
+        <ul className="mt-5 list-disc space-y-2 pl-5 text-sm text-mist-300">
           <li>Default-deny allowlist on providers</li>
           <li>Mutual pairing for private clusters</li>
           <li>Control plane never runs GPU containers — it dials peers only</li>
