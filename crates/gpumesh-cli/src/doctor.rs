@@ -94,6 +94,10 @@ pub async fn run() -> Result<()> {
         );
     }
 
+    ui::section("CUDA remoting (R2)");
+    ui::dim("LAN spike: gpumesh cuda doctor | cuda share | cuda demo --peer <name>");
+    ui::warn("Not a drop-in libcuda — see docs/cuda-remote.md");
+
     ui::section("Summary");
     if failures == 0 {
         ui::ok("Environment looks ready.");

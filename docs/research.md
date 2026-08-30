@@ -18,9 +18,9 @@
 | **Jobs** (`gpumesh run`) | Host (Docker) | Host | Shipped |
 | **Desktop** (`gpumesh desktop`) | Host (full OS session) | Host | Shipped (RDP/VNC tunnel) |
 | **Hybrid launcher** (`gpumesh app`) | Host (Docker / optional desktop) | Host | **Shipped (R1)** |
-| **GPU remoting (this doc)** | **Client** | **Host** | **Not built (R2)** |
+| **GPU remoting** (`gpumesh cuda`) | Client uses remoting API | Host ops | **Shipped spike (R2)** — not drop-in libcuda |
 
-This document is about the **GPU remoting** row (R2). R1 hybrid is a product workaround, not remoting.
+This document covers remoting research. **R2 spike** is shipped as [`gpumesh cuda`](./cuda-remote.md) (narrow Runtime-API subset + host-memory backend). Full drop-in `libcuda` remains unsolved.
 
 ---
 
@@ -267,15 +267,25 @@ gpumesh app pull --peer alice-pc --job <id> --dir ./out
 - `--desktop` prints `gpumesh desktop connect <peer>` (GUI still runs on the host)  
 - Honest banner: this is **not** a local `.exe` using a remote CUDA device  
 
-### R2 — CUDA remoting spike (LAN only)
+### R2 — CUDA remoting spike (LAN only) — **done (narrow)**
 
-- Subset of Runtime API  
-- Benchmark vs local and vs `gpumesh run`  
-- Go/no-go after spike metrics  
+```bash
+gpumesh cuda share
+gpumesh cuda allow bob-laptop
+gpumesh cuda demo --peer alice-pc
+gpumesh cuda bench --peer alice-pc --iters 50
+```
 
-### R3 — Expand remoting only if R2 succeeds
+- Capability `gpu_remote_allowed` (does **not** grant jobs)  
+- Ops: device query, malloc/free, memcpy, memset, sync, built-in `vector_add_f32`  
+- Backend: `host-memory` + NVML identity (not full driver kernel launch)  
+- Docs: [cuda-remote.md](./cuda-remote.md)  
+- **Not included:** PyTorch / arbitrary CUDA apps / ICD interposition  
 
-- More CUDA APIs  
+### R3 — Expand remoting only if R2 metrics look good
+
+- Real CUDA driver / PTX kernel path  
+- Broader Runtime API  
 - Optional OpenGL path  
 - Never promise D3D12/Vulkan “all Steam games” without a dedicated graphics team  
 
@@ -294,9 +304,9 @@ gpumesh app pull --peer alice-pc --job <id> --dir ./out
 | --- | --- |
 | Train / scripts on peer GPU | **Already: `gpumesh run`** |
 | Use Blender/Unity GUI on peer GPU | **Already: `gpumesh desktop`** (app on host) |
-| Keep `.exe` local, GPU remote, any app | **Research; likely years / vendor tech** |
+| Keep `.exe` local, GPU remote, any app | **Research; not R2** — spike is remoting API, not ICD |
 | Keep project local-feeling, GPU remote | **Shipped: `gpumesh app` (R1)** |
-| CUDA-only tools, LAN | **R2 remoting spike** |
+| CUDA-only tools, LAN | **Shipped spike: `gpumesh cuda` (R2)** — expand in R3 |
 
 ---
 
@@ -315,10 +325,10 @@ gpumesh app pull --peer alice-pc --job <id> --dir ./out
 
 | Question | Answer |
 | --- | --- |
-| Can GPUMesh do local-app → remote-GPU today? | **No** (process still runs on the host) |
-| Can users still use peer GPUs for apps today? | **Yes** — **`gpumesh app`** (hybrid), **desktop**, or **jobs** |
-| Can we eventually do true remoting? | **Partially** — next is **R2 CUDA LAN spike**; do not promise universal local GUI remoting |
-| Best next product step | **R2 CUDA remoting spike** (LAN only) |
+| Can GPUMesh do local-app → remote-GPU today? | **Partially** — `gpumesh cuda` remotes a small API; **not** drop-in libcuda |
+| Can users still use peer GPUs for apps today? | **Yes** — **`gpumesh app`**, **desktop**, **jobs**, or **`cuda` demo** |
+| Can we eventually do true remoting? | **Maybe** — R3 if bench/demo metrics on LAN look usable |
+| Best next product step | **R3** only if R2 p50 RTT is acceptable on your LAN; else stay on app/desktop |
 
 ---
 
@@ -332,4 +342,4 @@ gpumesh app pull --peer alice-pc --job <id> --dir ./out
 
 ---
 
-*Last updated: R1 hybrid launcher shipped (`gpumesh app`). Path B CUDA remoting still research-only.*
+*Last updated: R2 CUDA remoting spike shipped (`gpumesh cuda`). Full libcuda interposition still research / R3.*

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const PROTOCOL_MAJOR: u16 = 1;
-pub const PROTOCOL_MINOR: u16 = 2;
+pub const PROTOCOL_MINOR: u16 = 3;
 pub const DEFAULT_AGENT_PORT: u16 = 47000;
 pub const DEFAULT_IMAGE: &str = "nvidia/cuda:12.8.0-runtime-ubuntu22.04";
 pub const APP_DIR_NAME: &str = ".gpumesh";
@@ -143,10 +143,20 @@ pub struct NodeConfig {
     /// enabled live by `gpumesh desktop share`.
     #[serde(default)]
     pub desktop_sharing: bool,
+    /// Allow CUDA remoting sessions (R2). Off by default; enabled by `gpumesh cuda share`.
+    #[serde(default)]
+    pub cuda_remote_sharing: bool,
+    /// Cap total CUDA remoting allocations per session (MB).
+    #[serde(default = "default_cuda_max_alloc_mb")]
+    pub cuda_remote_max_alloc_mb: u64,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_cuda_max_alloc_mb() -> u64 {
+    512
 }
 
 impl Default for NodeConfig {
@@ -177,6 +187,8 @@ impl Default for NodeConfig {
             allowed_images: default_allowed_images(),
             docker_harden: true,
             desktop_sharing: false,
+            cuda_remote_sharing: false,
+            cuda_remote_max_alloc_mb: default_cuda_max_alloc_mb(),
         }
     }
 }

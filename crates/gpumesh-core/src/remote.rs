@@ -331,6 +331,8 @@ pub async fn serve_peer_session(node: &MeshNode, conn: PeerConnection) -> Result
     let conn = Arc::new(conn);
     let mut uploads: std::collections::HashMap<String, (FileOffer, Vec<u8>)> =
         std::collections::HashMap::new();
+    let mut cuda_sessions: std::collections::HashMap<String, crate::cuda_remote::CudaSession> =
+        std::collections::HashMap::new();
 
     loop {
         let msg = match conn.recv().await? {
@@ -347,6 +349,33 @@ pub async fn serve_peer_session(node: &MeshNode, conn: PeerConnection) -> Result
             }
             Message::DesktopRequest { prefer } => {
                 crate::desktop::handle_desktop_request(node, conn.clone(), prefer).await?;
+            }
+            Message::GpuRemoteOpen { api, client_ver } => {
+                crate::cuda_remote::handle_gpu_remote_open(
+                    node,
+                    &conn,
+                    api,
+                    client_ver,
+                    &mut cuda_sessions,
+                )
+                .await?;
+            }
+            Message::CudaOp {
+                session_id,
+                op_id,
+                op,
+            } => {
+                crate::cuda_remote::handle_cuda_op(
+                    &conn,
+                    &mut cuda_sessions,
+                    session_id,
+                    op_id,
+                    op,
+                )
+                .await?;
+            }
+            Message::GpuRemoteClose { session_id } => {
+                crate::cuda_remote::handle_gpu_remote_close(&mut cuda_sessions, &session_id);
             }
             Message::FileOffer(offer) => match offer.direction {
                 FileDirection::Upload => {

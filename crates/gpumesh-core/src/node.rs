@@ -34,6 +34,8 @@ pub struct MeshNode {
     pub sharing_since: Arc<RwLock<Option<i64>>>,
     /// Interactive desktop tunnels enabled.
     pub desktop_sharing: Arc<RwLock<bool>>,
+    /// CUDA remoting (R2) enabled.
+    pub cuda_remote_sharing: Arc<RwLock<bool>>,
 }
 
 impl MeshNode {
@@ -57,6 +59,7 @@ impl MeshNode {
             sharing: Arc::new(RwLock::new(false)),
             sharing_since: Arc::new(RwLock::new(None)),
             desktop_sharing: Arc::new(RwLock::new(false)),
+            cuda_remote_sharing: Arc::new(RwLock::new(false)),
         })
     }
 
@@ -304,6 +307,19 @@ impl MeshNode {
         Ok(())
     }
 
+    pub async fn allow_gpu_remote_peer(&self, peer: &str) -> Result<()> {
+        let store = self.peers.read().await;
+        let rec = store
+            .get(peer)
+            .ok_or_else(|| GpuMeshError::PeerNotFound(peer.into()))?;
+        let id = rec.node_id.clone();
+        drop(store);
+        let mut allow = self.allowlist.write().await;
+        allow.allow_gpu_remote(id);
+        StateStore::save_allowlist(&allow)?;
+        Ok(())
+    }
+
     pub async fn enable_desktop_share(&self) -> Result<()> {
         let mut cfg = self.config.write().await;
         cfg.desktop_sharing = true;
@@ -316,6 +332,21 @@ impl MeshNode {
             *self.sharing_since.write().await = Some(Utc::now().timestamp());
         }
         info!("desktop sharing enabled");
+        Ok(())
+    }
+
+    pub async fn enable_cuda_remote_share(&self) -> Result<()> {
+        let mut cfg = self.config.write().await;
+        cfg.cuda_remote_sharing = true;
+        // Accept inbound connections (handshake); jobs still require job allow separately.
+        cfg.sharing_enabled = true;
+        StateStore::save_config(&cfg)?;
+        *self.cuda_remote_sharing.write().await = true;
+        *self.sharing.write().await = true;
+        if self.sharing_since.read().await.is_none() {
+            *self.sharing_since.write().await = Some(Utc::now().timestamp());
+        }
+        info!("CUDA remoting share enabled");
         Ok(())
     }
 
@@ -432,7 +463,9 @@ impl MeshNode {
     pub async fn authorize_inbound(&self, hello: &ProtocolHello) -> Result<()> {
         verify_hello(hello)?;
         let allow = self.allowlist.read().await;
-        let ok = allow.is_allowed(&hello.node_id) || allow.is_desktop_allowed(&hello.node_id);
+        let ok = allow.is_allowed(&hello.node_id)
+            || allow.is_desktop_allowed(&hello.node_id)
+            || allow.is_gpu_remote_allowed(&hello.node_id);
         if !ok {
             return Err(GpuMeshError::NotAuthorized(hello.node_id.clone()));
         }

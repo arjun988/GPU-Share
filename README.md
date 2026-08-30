@@ -152,6 +152,22 @@ gpumesh app pull --peer alice-pc --job <id> --dir ./out
 gpumesh app run --peer alice-pc --dir ./proj --desktop
 ```
 
+## CUDA remoting spike (`gpumesh cuda`)
+
+LAN-oriented Runtime-API remoting (R2). **Not** a drop-in `libcuda` for arbitrary apps.
+
+```bash
+# Host
+gpumesh cuda share
+gpumesh cuda allow bob-laptop
+
+# Client
+gpumesh cuda demo --peer alice-pc
+gpumesh cuda bench --peer alice-pc
+```
+
+Details: [docs/cuda-remote.md](./docs/cuda-remote.md).
+
 ## Public GPU network (Phase 7)
 
 Publish **metadata only** — does not open your GPU to strangers.
@@ -194,6 +210,7 @@ Open http://127.0.0.1:3000 (or the port Next prints).
 | Area | Commands |
 | --- | --- |
 | Core | `start` `init` `status` `gpu` `doctor` `share` `pair-code` `pair` `peers` `run` `search` |
+| Apps | `app sync\|run\|pull` · `desktop …` · `cuda share\|allow\|demo\|bench\|doctor` |
 | Clusters | `group create\|list\|invite\|join\|add\|members` |
 | DX | `jobs` `logs` `config` `update` `completion` |
 | Cloud | `sync` `dashboard` |
@@ -207,4 +224,4 @@ dashboard/   Next.js + Tailwind UI
 docs/
 ```
 
-Docs: [PRD](./PRD.md) · [Two-machine demo](./docs/two-machine-demo.md) · [Phase 4](./docs/phase4-dx.md) · [Phases 5–6](./docs/phase5-6.md) · [Phase 7](./docs/phase7.md) · [GPU desktop](./docs/gpu-desktop.md) · [Research: remote GPU for local apps](./docs/research.md)
+Docs: [PRD](./PRD.md) · [Two-machine demo](./docs/two-machine-demo.md) · [Phase 4](./docs/phase4-dx.md) · [Phases 5–6](./docs/phase5-6.md) · [Phase 7](./docs/phase7.md) · [GPU desktop](./docs/gpu-desktop.md) · [CUDA remoting](./docs/cuda-remote.md) · [Research](./docs/research.md)

@@ -119,7 +119,7 @@ Desktop is a **higher privilege** than jobs: full interactive access to the host
 | --- | --- |
 | WAN quality | Depends on RDP/VNC + network; use relay/`GPUMESH_RELAY` if needed |
 | Sunshine/Moonlight UDP | Not fully supported yet (TCP helper only); prefer RDP for apps |
-| Path B (local app → remote CUDA) | Not built — use **`gpumesh app`** (process on host) or desktop |
+| Path B (local app → remote CUDA) | Spike: **`gpumesh cuda`** (narrow API); not drop-in ICD |
 | Consent UI / idle timeout | Future (D2) |
 | Custom WebRTC encoder | Future; not required while RDP/VNC works |
 
@@ -152,7 +152,8 @@ Also in `gpumesh start` under **Apps (hybrid)**.
 
 ## Related
 
-- [Research: local apps on remote GPU](./research.md) — Path B remoting (not built); R1 hybrid is `gpumesh app`
+- [Research: local apps on remote GPU](./research.md) — Path B research; R1=`app`, R2=`cuda`
+- [CUDA remoting](./cuda-remote.md) — R2 spike
 - [PRD](../PRD.md)
 - [Two-machine demo](./two-machine-demo.md) — job-only flow
 - [Architecture](./architecture.md)

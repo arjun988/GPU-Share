@@ -341,6 +341,9 @@ pub struct AllowList {
     /// Node IDs allowed to open interactive desktop sessions (separate from jobs).
     #[serde(default)]
     pub desktop_allowed: HashSet<String>,
+    /// Node IDs allowed to open CUDA remoting sessions (R2; stricter — does not grant jobs).
+    #[serde(default)]
+    pub gpu_remote_allowed: HashSet<String>,
 }
 
 impl AllowList {
@@ -358,6 +361,13 @@ impl AllowList {
         self.desktop_allowed.contains(node_id)
     }
 
+    pub fn is_gpu_remote_allowed(&self, node_id: &str) -> bool {
+        if self.denied.contains(node_id) {
+            return false;
+        }
+        self.gpu_remote_allowed.contains(node_id)
+    }
+
     pub fn allow(&mut self, node_id: impl Into<String>) {
         let id = node_id.into();
         self.denied.remove(&id);
@@ -372,10 +382,18 @@ impl AllowList {
         self.allowed.insert(id);
     }
 
+    pub fn allow_gpu_remote(&mut self, node_id: impl Into<String>) {
+        let id = node_id.into();
+        self.denied.remove(&id);
+        self.gpu_remote_allowed.insert(id);
+        // Intentionally does NOT grant job allow — remoting is a separate capability.
+    }
+
     pub fn deny(&mut self, node_id: impl Into<String>) {
         let id = node_id.into();
         self.allowed.remove(&id);
         self.desktop_allowed.remove(&id);
+        self.gpu_remote_allowed.remove(&id);
         self.denied.insert(id);
     }
 }
@@ -423,5 +441,16 @@ mod tests {
             identity.node_id
         );
         assert!(node_id_from_public_hex("abcd").is_err());
+    }
+
+    #[test]
+    fn gpu_remote_allow_does_not_grant_jobs() {
+        let mut list = AllowList::default();
+        list.allow_gpu_remote("node-a");
+        assert!(list.is_gpu_remote_allowed("node-a"));
+        assert!(!list.is_allowed("node-a"));
+        assert!(!list.is_desktop_allowed("node-a"));
+        list.deny("node-a");
+        assert!(!list.is_gpu_remote_allowed("node-a"));
     }
 }

@@ -2,6 +2,7 @@
 
 mod app;
 mod commands;
+mod cuda;
 mod desktop;
 mod doctor;
 mod group;
@@ -106,6 +107,11 @@ pub(crate) enum Commands {
     App {
         #[command(subcommand)]
         action: app::AppCmd,
+    },
+    /// CUDA remoting spike (R2 — LAN Runtime-API subset)
+    Cuda {
+        #[command(subcommand)]
+        action: cuda::CudaCmd,
     },
     /// Manage private GPU clusters (Phase 5)
     Group {

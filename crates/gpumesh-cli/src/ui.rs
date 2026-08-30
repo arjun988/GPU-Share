@@ -99,6 +99,8 @@ Examples:
   gpumesh desktop connect alice-pc
   gpumesh app run --peer alice-pc --dir ./train python train.py
   gpumesh app pull --peer alice-pc --job <id>
+  gpumesh cuda share
+  gpumesh cuda demo --peer alice-pc
   gpumesh init --name my-pc
   gpumesh share
   gpumesh share --public --region us-west

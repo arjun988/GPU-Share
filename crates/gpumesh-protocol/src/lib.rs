@@ -140,6 +140,96 @@ pub enum Message {
     DesktopReject {
         reason: String,
     },
+    /// Client opens a CUDA remoting session (R2 spike — LAN only).
+    GpuRemoteOpen {
+        /// API family; currently only "cuda".
+        api: String,
+        client_ver: u32,
+    },
+    GpuRemoteOffer {
+        session_id: String,
+        api: String,
+        /// Host execution backend: "host-memory" (spike) — device buffers live on the host;
+        /// device identity comes from NVML when available.
+        backend: String,
+        max_alloc_bytes: u64,
+        devices: Vec<CudaDeviceInfo>,
+        lan_warning: String,
+    },
+    GpuRemoteReject {
+        reason: String,
+    },
+    CudaOp {
+        session_id: String,
+        op_id: u64,
+        op: CudaOpKind,
+    },
+    CudaResult {
+        session_id: String,
+        op_id: u64,
+        ok: bool,
+        error: Option<String>,
+        /// Host-side time for the op (microseconds).
+        elapsed_us: u64,
+        #[serde(default)]
+        device_count: Option<u32>,
+        #[serde(default)]
+        device: Option<CudaDeviceInfo>,
+        #[serde(default)]
+        ptr: Option<u64>,
+        #[serde(default)]
+        data: Option<Vec<u8>>,
+    },
+    GpuRemoteClose {
+        session_id: String,
+    },
+}
+
+/// Remoted device identity (from NVML / nvidia-smi on the host).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CudaDeviceInfo {
+    pub index: u32,
+    pub name: String,
+    pub vram_total_mb: u64,
+    pub vram_free_mb: u64,
+    pub compute_capability: Option<String>,
+}
+
+/// Subset of CUDA Runtime-style ops for the R2 spike.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CudaOpKind {
+    DeviceCount,
+    DeviceProps {
+        device: u32,
+    },
+    Malloc {
+        bytes: u64,
+    },
+    Free {
+        ptr: u64,
+    },
+    MemcpyHtoD {
+        dst: u64,
+        data: Vec<u8>,
+    },
+    MemcpyDtoH {
+        src: u64,
+        bytes: u64,
+    },
+    Memset {
+        ptr: u64,
+        value: u8,
+        bytes: u64,
+    },
+    Sync,
+    /// Built-in f32 vector add: out[i] = a[i] + b[i] for i in 0..n (n elements).
+    VectorAddF32 {
+        a: u64,
+        b: u64,
+        out: u64,
+        n: u32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -32,6 +32,10 @@ enum Action {
     AppSync,
     AppRun,
     AppPull,
+    CudaShare,
+    CudaAllow,
+    CudaDemo,
+    CudaDoctor,
     Status,
     Gpu,
     Doctor,
@@ -69,6 +73,11 @@ const MENU: &[Item] = &[
     Item::Action(Action::AppSync),
     Item::Action(Action::AppRun),
     Item::Action(Action::AppPull),
+    Item::Header("CUDA remoting (R2)"),
+    Item::Action(Action::CudaShare),
+    Item::Action(Action::CudaAllow),
+    Item::Action(Action::CudaDemo),
+    Item::Action(Action::CudaDoctor),
     Item::Action(Action::Status),
     Item::Action(Action::Gpu),
     Item::Header("Cluster"),
@@ -130,6 +139,10 @@ fn label(action: Action) -> &'static str {
         Action::AppSync => "Sync project to a peer",
         Action::AppRun => "Run project on a peer GPU",
         Action::AppPull => "Pull job outputs from a peer",
+        Action::CudaShare => "Share GPU for CUDA remoting",
+        Action::CudaAllow => "Allow peer for CUDA remoting",
+        Action::CudaDemo => "Run CUDA remoting demo",
+        Action::CudaDoctor => "CUDA remoting doctor",
         Action::Status => "Node status",
         Action::Gpu => "GPU inventory",
         Action::Doctor => "Doctor (diagnose setup)",
@@ -373,6 +386,20 @@ async fn dispatch_action(action: Action) -> Result<()> {
             })
             .await
         }
+        Action::CudaShare => crate::cuda::dispatch(crate::cuda::CudaCmd::Share).await,
+        Action::CudaAllow => {
+            let peer = prompt_string("Peer name")?;
+            crate::cuda::dispatch(crate::cuda::CudaCmd::Allow { peer }).await
+        }
+        Action::CudaDemo => {
+            let peer = prompt_string("Peer name")?;
+            crate::cuda::dispatch(crate::cuda::CudaCmd::Demo {
+                peer,
+                n: 262_144,
+            })
+            .await
+        }
+        Action::CudaDoctor => crate::cuda::dispatch(crate::cuda::CudaCmd::Doctor).await,
         Action::Status => commands::dispatch(Commands::Status).await,
         Action::Gpu => commands::dispatch(Commands::Gpu).await,
         Action::Doctor => commands::dispatch(Commands::Doctor).await,
