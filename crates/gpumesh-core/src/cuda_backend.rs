@@ -709,6 +709,14 @@ impl BackendSession {
 #[cfg(feature = "cuda-driver")]
 impl CudaState {
     fn try_new() -> Result<Self, String> {
+        // cudarc panics (does not return Err) when libcuda / nvrtc cannot be dlopened.
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(Self::try_new_inner)) {
+            Ok(r) => r,
+            Err(_) => Err("unable to load CUDA shared library (libcuda / nvrtc)".into()),
+        }
+    }
+
+    fn try_new_inner() -> Result<Self, String> {
         let ctx = cudarc::driver::CudaContext::new(0).map_err(|e| e.to_string())?;
         let stream = ctx.default_stream();
         let ptx = cudarc::nvrtc::compile_ptx(
@@ -781,9 +789,14 @@ unsafe fn launch_ptr_kernel(
 pub fn probe_cuda_driver() -> Result<String, String> {
     #[cfg(feature = "cuda-driver")]
     {
-        let ctx = cudarc::driver::CudaContext::new(0).map_err(|e| e.to_string())?;
-        let _ = ctx.default_stream();
-        Ok("cuda-driver (cudarc + NVRTC)".into())
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let ctx = cudarc::driver::CudaContext::new(0).map_err(|e| e.to_string())?;
+            let _ = ctx.default_stream();
+            Ok::<_, String>("cuda-driver (cudarc + NVRTC)".into())
+        })) {
+            Ok(r) => r,
+            Err(_) => Err("unable to load CUDA shared library (libcuda / nvrtc)".into()),
+        }
     }
     #[cfg(not(feature = "cuda-driver"))]
     Err("built without cuda-driver feature".into())
