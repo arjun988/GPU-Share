@@ -17,3 +17,5 @@ __pycache__/
 dashboard/node_modules/
 dashboard/.next/
 dashboard/out/
+PRD.md
+docs/

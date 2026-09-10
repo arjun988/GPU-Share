@@ -4,39 +4,32 @@ Thanks for helping improve GPUMesh. This project is CLI-first, Apache-2.0, and b
 
 ## Before you start
 
-1. Read the [README](./README.md) and skim [PRD.md](./PRD.md) for product intent.
-2. Prefer fixing or extending existing Phases **0–7** behavior over large new surfaces.
-3. Keep the control plane / dashboard **metadata + local ops only** — do not run GPU containers there.
+1. Read the [README](./README.md) for product intent and commands.
+2. Keep the control plane / dashboard **metadata + local ops only** — do not run GPU containers there.
+3. Prefer focused changes over large new surfaces.
 
 ## Development setup
 
 ```bash
-# CLI + agent
 cargo build -p gpumesh-cli -p gpumesh-agent
-
-# Local dashboard API
 cargo build -p gpumesh-control
-
-# Tests (example)
 cargo test -p gpumesh-core
-
-# Dashboard UI
 cd dashboard && npm install && npm run build
 ```
 
-On Linux providers you will also need Docker and the NVIDIA Container Toolkit to exercise `share` / `run` end-to-end.
+On Linux providers you also need Docker and the NVIDIA Container Toolkit to exercise `share` / `run` end-to-end.
 
 ## Conventions
 
 - **Protocol:** message types live in `gpumesh-protocol`. Stay backward compatible within major version `1`.
 - **Security:** default-deny allowlists; pairing and public listings are signed; do not weaken auth “for demos.”
-- **Honesty:** document limits (desktop, CUDA remoting, WAN) clearly — no GeForce NOW claims.
+- **Honesty:** document limits (desktop, CUDA remoting, WAN) clearly.
 - **Style:** match surrounding Rust / TypeScript; keep diffs focused.
 
 ## Pull requests
 
 - One concern per PR when practical.
-- Describe **why**, how you tested (`cargo test`, two-machine smoke, dashboard), and any user-facing CLI/docs changes.
+- Describe **why**, how you tested (`cargo test`, two-machine smoke, dashboard), and any user-facing CLI changes.
 - Do not commit secrets, `.env` files, or large binaries.
 
 ## Security reports
