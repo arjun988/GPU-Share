@@ -9,8 +9,8 @@ use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use gpumesh_common::{parse_size_to_mb, JobState};
 use gpumesh_core::{
-    pull_job_outputs, run_remote_job, schedule_peer, transfer_file_from_peer, transfer_file_to_peer,
-    MeshNode, ScheduleRequest,
+    pull_job_outputs, run_remote_job, schedule_peer, transfer_file_from_peer,
+    transfer_file_to_peer, MeshNode, ScheduleRequest,
 };
 use gpumesh_storage::{package_workdir, unpack_archive, JobRecord};
 
@@ -262,9 +262,7 @@ async fn run(
     let mut rec = JobRecord::new(
         job_id.clone(),
         Some(peer_name.clone()),
-        image
-            .clone()
-            .unwrap_or_else(|| cfg.default_image.clone()),
+        image.clone().unwrap_or_else(|| cfg.default_image.clone()),
         command.clone(),
     );
     rec.state = JobState::Running;
@@ -339,7 +337,11 @@ async fn pull(peer: &str, job: Option<&str>, remote: Option<&str>, dir: &str) ->
     node.start_network().await?;
 
     if let Some(remote) = remote {
-        let local = if remote.rsplit('/').next().is_some_and(|n| n.ends_with(".gpk")) {
+        let local = if remote
+            .rsplit('/')
+            .next()
+            .is_some_and(|n| n.ends_with(".gpk"))
+        {
             dest.join(".gpumesh-pull.gpk")
         } else {
             let name = Path::new(remote)
@@ -351,9 +353,7 @@ async fn pull(peer: &str, job: Option<&str>, remote: Option<&str>, dir: &str) ->
         let spinner = ui::spinner(&format!("Downloading {peer}:{remote}…"));
         transfer_file_from_peer(&node, peer, remote, &local).await?;
         spinner.finish_and_clear();
-        if local.extension().and_then(|e| e.to_str()) == Some("gpk")
-            || remote.ends_with(".gpk")
-        {
+        if local.extension().and_then(|e| e.to_str()) == Some("gpk") || remote.ends_with(".gpk") {
             unpack_archive(&local, &dest)?;
             let _ = std::fs::remove_file(&local);
             ui::ok(format!("Unpacked {remote} → {}", dest.display()));

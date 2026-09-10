@@ -91,7 +91,10 @@ fn require_auth(state: &LocalState, headers: &HeaderMap) -> Result<(), ApiError>
     if authorized(state, headers) {
         Ok(())
     } else {
-        Err(err(StatusCode::UNAUTHORIZED, "missing or invalid API token"))
+        Err(err(
+            StatusCode::UNAUTHORIZED,
+            "missing or invalid API token",
+        ))
     }
 }
 
@@ -163,7 +166,12 @@ async fn status(
     let jobs = JobRecord::list().unwrap_or_default();
     let jobs_running = jobs
         .iter()
-        .filter(|j| matches!(j.state, JobState::Running | JobState::Starting | JobState::Pending | JobState::Transferring))
+        .filter(|j| {
+            matches!(
+                j.state,
+                JobState::Running | JobState::Starting | JobState::Pending | JobState::Transferring
+            )
+        })
         .count();
     let groups = GroupStore::load().map(|s| s.list().len()).unwrap_or(0);
     let pid = share_pid();
@@ -230,12 +238,18 @@ async fn peers(
     }
     let store = PeerStore::load().map_err(map_err)?;
     let allow = StateStore::load_allowlist().unwrap_or_default();
-    let want_probe = matches!(
-        q.probe.as_deref(),
-        Some("1") | Some("true") | Some("yes")
-    );
-    let mut live: std::collections::HashMap<String, (String, Option<bool>, Option<String>, Option<u64>, Option<u64>, Option<u32>)> =
-        std::collections::HashMap::new();
+    let want_probe = matches!(q.probe.as_deref(), Some("1") | Some("true") | Some("yes"));
+    let mut live: std::collections::HashMap<
+        String,
+        (
+            String,
+            Option<bool>,
+            Option<String>,
+            Option<u64>,
+            Option<u64>,
+            Option<u32>,
+        ),
+    > = std::collections::HashMap::new();
     if want_probe && !store.list().is_empty() {
         if let Ok(mut node) = MeshNode::bootstrap().await {
             if node.ensure_dialer().await.is_ok() {
@@ -245,10 +259,11 @@ async fn peers(
                     let id = p.node_id.clone();
                     let n = node.clone();
                     handles.push(tokio::spawn(async move {
-                        let status = tokio::time::timeout(Duration::from_secs(3), probe_peer(&n, &id))
-                            .await
-                            .ok()
-                            .and_then(|r| r.ok());
+                        let status =
+                            tokio::time::timeout(Duration::from_secs(3), probe_peer(&n, &id))
+                                .await
+                                .ok()
+                                .and_then(|r| r.ok());
                         (id, status)
                     }));
                 }
@@ -270,7 +285,9 @@ async fn peers(
                 node_id_short: short_fingerprint(&p.node_id),
                 node_name: p.node_name.clone(),
                 addrs: p.addrs.clone(),
-                gpu_model: probed.and_then(|x| x.2.clone()).or_else(|| p.gpu_model.clone()),
+                gpu_model: probed
+                    .and_then(|x| x.2.clone())
+                    .or_else(|| p.gpu_model.clone()),
                 vram_mb: probed.and_then(|x| x.3).or(p.vram_mb),
                 vram_free_mb: probed.and_then(|x| x.4),
                 utilization: probed.and_then(|x| x.5),
@@ -290,7 +307,17 @@ async fn peers(
 async fn probe_peer(
     node: &MeshNode,
     peer_id: &str,
-) -> Result<(String, Option<bool>, Option<String>, Option<u64>, Option<u64>, Option<u32>), GpuMeshError> {
+) -> Result<
+    (
+        String,
+        Option<bool>,
+        Option<String>,
+        Option<u64>,
+        Option<u64>,
+        Option<u32>,
+    ),
+    GpuMeshError,
+> {
     let conn = node.connect_peer(peer_id).await?;
     conn.send(Message::PeerInfoRequest).await?;
     let out = match conn.recv().await? {
@@ -500,7 +527,10 @@ async fn pair(
 ) -> Result<Json<LocalPeer>, ApiError> {
     require_auth(&state, &headers)?;
     let node = MeshNode::bootstrap().await.map_err(map_err)?;
-    let rec = node.pair_with_code(body.code.trim()).await.map_err(map_err)?;
+    let rec = node
+        .pair_with_code(body.code.trim())
+        .await
+        .map_err(map_err)?;
     let allow = StateStore::load_allowlist().unwrap_or_default();
     Ok(Json(LocalPeer {
         node_id: rec.node_id.clone(),
@@ -550,7 +580,9 @@ async fn allow_cuda(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_auth(&state, &headers)?;
     let node = MeshNode::bootstrap().await.map_err(map_err)?;
-    node.allow_gpu_remote_peer(&body.peer).await.map_err(map_err)?;
+    node.allow_gpu_remote_peer(&body.peer)
+        .await
+        .map_err(map_err)?;
     Ok(Json(serde_json::json!({ "ok": true, "peer": body.peer })))
 }
 

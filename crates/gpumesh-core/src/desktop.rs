@@ -60,7 +60,11 @@ pub async fn detect_backend(prefer: &[String]) -> Option<DesktopBackend> {
         let mut ordered = Vec::new();
         for p in prefer {
             for c in &candidates {
-                if c.name.eq_ignore_ascii_case(p) && !ordered.iter().any(|x: &&DesktopBackend| x.host_port == c.host_port) {
+                if c.name.eq_ignore_ascii_case(p)
+                    && !ordered
+                        .iter()
+                        .any(|x: &&DesktopBackend| x.host_port == c.host_port)
+                {
                     ordered.push(c);
                 }
             }
@@ -108,10 +112,7 @@ pub async fn handle_desktop_request(
         return Ok(());
     }
 
-    let peer_id = conn
-        .peer_node_id
-        .clone()
-        .unwrap_or_default();
+    let peer_id = conn.peer_node_id.clone().unwrap_or_default();
     {
         let allow = node.allowlist.read().await;
         if !allow.is_desktop_allowed(&peer_id) {
@@ -211,7 +212,13 @@ pub async fn connect_desktop(node: &MeshNode, peer: &str, local_port: Option<u16
             viewer_hint,
         }) => {
             info!("desktop offer session={session_id} backend={backend} host_port={host_port}");
-            (session_id, backend, host_port, suggest_local_port, viewer_hint)
+            (
+                session_id,
+                backend,
+                host_port,
+                suggest_local_port,
+                viewer_hint,
+            )
         }
         Some(Message::DesktopReject { reason }) => {
             return Err(GpuMeshError::NotAuthorized(reason));
@@ -230,7 +237,9 @@ pub async fn connect_desktop(node: &MeshNode, peer: &str, local_port: Option<u16
     let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], bind_port)))
         .await
         .map_err(|e| GpuMeshError::Network(format!("bind local desktop port: {e}")))?;
-    let local = listener.local_addr().map_err(|e| GpuMeshError::Network(e.to_string()))?;
+    let local = listener
+        .local_addr()
+        .map_err(|e| GpuMeshError::Network(e.to_string()))?;
 
     let hint = offer.4.replace("LOCAL_PORT", &local.port().to_string());
     println!();

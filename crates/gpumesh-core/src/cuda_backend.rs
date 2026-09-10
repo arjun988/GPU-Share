@@ -116,7 +116,11 @@ impl BackendSession {
                     partial.device = Some(d.clone());
                     (true, None, partial)
                 }
-                None => (false, Some(format!("invalid device index {device}")), partial),
+                None => (
+                    false,
+                    Some(format!("invalid device index {device}")),
+                    partial,
+                ),
             },
             CudaOpKind::GetDevice => {
                 partial.device_index = Some(self.current_device);
@@ -215,7 +219,11 @@ impl BackendSession {
         #[cfg(feature = "cuda-driver")]
         if let Some(cuda) = &self.cuda {
             if let Err(e) = cuda.stream.synchronize() {
-                return (false, Some(format!("cuda synchronize: {e}")), CudaPartial::default());
+                return (
+                    false,
+                    Some(format!("cuda synchronize: {e}")),
+                    CudaPartial::default(),
+                );
             }
         }
         (true, None, CudaPartial::default())
@@ -226,7 +234,10 @@ impl BackendSession {
             return (false, Some(e), CudaPartial::default());
         }
         let ptr = self.next_ptr;
-        self.next_ptr = self.next_ptr.saturating_add(bytes.max(64)).saturating_add(64);
+        self.next_ptr = self
+            .next_ptr
+            .saturating_add(bytes.max(64))
+            .saturating_add(64);
 
         #[cfg(feature = "cuda-driver")]
         if let Some(cuda) = &mut self.cuda {
@@ -243,7 +254,13 @@ impl BackendSession {
                         },
                     );
                 }
-                Err(e) => return (false, Some(format!("cudaMalloc: {e}")), CudaPartial::default()),
+                Err(e) => {
+                    return (
+                        false,
+                        Some(format!("cudaMalloc: {e}")),
+                        CudaPartial::default(),
+                    )
+                }
             }
         }
 
@@ -311,7 +328,10 @@ impl BackendSession {
             if data.len() != buf.len() {
                 return Err("buffer size mismatch on write".into());
             }
-            return cuda.stream.memcpy_htod(data, buf).map_err(|e| e.to_string());
+            return cuda
+                .stream
+                .memcpy_htod(data, buf)
+                .map_err(|e| e.to_string());
         }
         let buf = self
             .host_buffers
@@ -341,12 +361,20 @@ impl BackendSession {
 
     fn op_htod(&mut self, dst: u64, data: Vec<u8>) -> (bool, Option<String>, CudaPartial) {
         if data.len() as u64 > MAX_MEMCPY {
-            return (false, Some("memcpy too large".into()), CudaPartial::default());
+            return (
+                false,
+                Some("memcpy too large".into()),
+                CudaPartial::default(),
+            );
         }
         match self.read_buf(dst) {
             Ok(mut full) => {
                 if data.len() > full.len() {
-                    return (false, Some("HtoD overflows buffer".into()), CudaPartial::default());
+                    return (
+                        false,
+                        Some("HtoD overflows buffer".into()),
+                        CudaPartial::default(),
+                    );
                 }
                 full[..data.len()].copy_from_slice(&data);
                 match self.write_buf(dst, &full) {
@@ -360,7 +388,11 @@ impl BackendSession {
 
     fn op_dtoh(&mut self, src: u64, bytes: u64) -> (bool, Option<String>, CudaPartial) {
         if bytes > MAX_MEMCPY {
-            return (false, Some("memcpy too large".into()), CudaPartial::default());
+            return (
+                false,
+                Some("memcpy too large".into()),
+                CudaPartial::default(),
+            );
         }
         match self.read_buf(src) {
             Ok(full) if (bytes as usize) <= full.len() => (
@@ -371,7 +403,11 @@ impl BackendSession {
                     ..Default::default()
                 },
             ),
-            Ok(_) => (false, Some("DtoH overflows buffer".into()), CudaPartial::default()),
+            Ok(_) => (
+                false,
+                Some("DtoH overflows buffer".into()),
+                CudaPartial::default(),
+            ),
             Err(e) => (false, Some(e), CudaPartial::default()),
         }
     }
@@ -394,7 +430,11 @@ impl BackendSession {
         match self.read_buf(ptr) {
             Ok(mut full) => {
                 if (bytes as usize) > full.len() {
-                    return (false, Some("memset overflows buffer".into()), CudaPartial::default());
+                    return (
+                        false,
+                        Some("memset overflows buffer".into()),
+                        CudaPartial::default(),
+                    );
                 }
                 full[..bytes as usize].fill(value);
                 match self.write_buf(ptr, &full) {
@@ -473,7 +513,11 @@ impl BackendSession {
                 );
             }
             if let Err(e) = stream.synchronize() {
-                return (false, Some(format!("vector_add sync: {e}")), CudaPartial::default());
+                return (
+                    false,
+                    Some(format!("vector_add sync: {e}")),
+                    CudaPartial::default(),
+                );
             }
             let out_f: Vec<f32> = match stream.clone_dtoh(&out_dev) {
                 Ok(v) => v,
@@ -539,7 +583,11 @@ impl BackendSession {
             let module = match cuda.ctx.load_module(compiled) {
                 Ok(m) => m,
                 Err(e) => {
-                    return (false, Some(format!("load module: {e}")), CudaPartial::default())
+                    return (
+                        false,
+                        Some(format!("load module: {e}")),
+                        CudaPartial::default(),
+                    )
                 }
             };
             let id = self.next_module;
@@ -583,7 +631,11 @@ impl BackendSession {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '_')
         {
-            return (false, Some("invalid function name".into()), CudaPartial::default());
+            return (
+                false,
+                Some("invalid function name".into()),
+                CudaPartial::default(),
+            );
         }
 
         #[cfg(feature = "cuda-driver")]
@@ -606,7 +658,8 @@ impl BackendSession {
                 }
             };
             use cudarc::driver::DevicePtr;
-            let mut ptr_vals: Vec<cudarc::driver::sys::CUdeviceptr> = Vec::with_capacity(args.len());
+            let mut ptr_vals: Vec<cudarc::driver::sys::CUdeviceptr> =
+                Vec::with_capacity(args.len());
             let mut _guards = Vec::new();
             for h in &args {
                 let Some(buf) = cuda.buffers.get(h) else {
@@ -690,7 +743,8 @@ unsafe fn launch_ptr_kernel(
 ) -> Result<(), String> {
     use cudarc::driver::PushKernelArg;
     let map = |r: Result<Option<(cudarc::driver::CudaEvent, cudarc::driver::CudaEvent)>, _>| {
-        r.map(|_| ()).map_err(|e: cudarc::driver::DriverError| e.to_string())
+        r.map(|_| ())
+            .map_err(|e: cudarc::driver::DriverError| e.to_string())
     };
     match ptrs.len() {
         0 => {

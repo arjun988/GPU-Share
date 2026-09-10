@@ -321,21 +321,16 @@ async fn dispatch_action(action: Action) -> Result<()> {
             })
             .await
         }
-        Action::DesktopShare => {
-            crate::desktop::dispatch(crate::desktop::DesktopCmd::Share).await
-        }
+        Action::DesktopShare => crate::desktop::dispatch(crate::desktop::DesktopCmd::Share).await,
         Action::DesktopConnect => {
             let peer = prompt_string("Peer name")?;
-            crate::desktop::dispatch(crate::desktop::DesktopCmd::Connect { peer, port: None })
-                .await
+            crate::desktop::dispatch(crate::desktop::DesktopCmd::Connect { peer, port: None }).await
         }
         Action::DesktopAllow => {
             let peer = prompt_string("Peer name")?;
             crate::desktop::dispatch(crate::desktop::DesktopCmd::Allow { peer }).await
         }
-        Action::DesktopDoctor => {
-            crate::desktop::dispatch(crate::desktop::DesktopCmd::Doctor).await
-        }
+        Action::DesktopDoctor => crate::desktop::dispatch(crate::desktop::DesktopCmd::Doctor).await,
         Action::AppSync => {
             let peer = prompt_string("Peer name")?;
             let dir = prompt_string_default("Project directory", ".")?;
@@ -393,11 +388,7 @@ async fn dispatch_action(action: Action) -> Result<()> {
         }
         Action::CudaDemo => {
             let peer = prompt_string("Peer name")?;
-            crate::cuda::dispatch(crate::cuda::CudaCmd::Demo {
-                peer,
-                n: 262_144,
-            })
-            .await
+            crate::cuda::dispatch(crate::cuda::CudaCmd::Demo { peer, n: 262_144 }).await
         }
         Action::CudaDoctor => crate::cuda::dispatch(crate::cuda::CudaCmd::Doctor).await,
         Action::Status => commands::dispatch(Commands::Status).await,

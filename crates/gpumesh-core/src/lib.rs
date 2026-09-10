@@ -1,9 +1,9 @@
 //! Domain orchestration: node bootstrap, sharing, pairing, local & remote jobs.
 
-mod handshake;
-mod desktop;
 mod cuda_backend;
 mod cuda_remote;
+mod desktop;
+mod handshake;
 mod node;
 mod remote;
 mod scheduler;

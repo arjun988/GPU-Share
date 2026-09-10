@@ -86,7 +86,11 @@ async fn doctor() -> Result<()> {
     }
 
     let init = gpumesh_storage::StateStore::is_initialized();
-    ui::check_line("identity", init, if init { "ok" } else { "run gpumesh init" });
+    ui::check_line(
+        "identity",
+        init,
+        if init { "ok" } else { "run gpumesh init" },
+    );
 
     let cfg = gpumesh_storage::StateStore::load_config().unwrap_or_default();
     ui::check_line(
@@ -102,7 +106,9 @@ async fn doctor() -> Result<()> {
     ui::section("Backend");
     match probe_cuda_driver() {
         Ok(s) => ui::ok(format!("Host driver: {s}")),
-        Err(e) => ui::warn(format!("cuda-driver not loadable ({e}); remoting falls back to host-memory")),
+        Err(e) => ui::warn(format!(
+            "cuda-driver not loadable ({e}); remoting falls back to host-memory"
+        )),
     }
     ui::dim("R3 prefers cuda-driver (real kernels). Fallback: host-memory + NVML identity.");
     ui::dim("C apps: gpumesh cuda bridge --peer <name>  then link gpumesh-cudart-stub.");

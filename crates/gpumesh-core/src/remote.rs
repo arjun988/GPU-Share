@@ -147,13 +147,7 @@ pub async fn pull_job_outputs(
     }
     std::fs::create_dir_all(dest)?;
     let pack = dest.join(".gpumesh-outputs.gpk");
-    transfer_file_from_peer(
-        node,
-        peer,
-        &format!("jobs/{job_id}/outputs.gpk"),
-        &pack,
-    )
-    .await?;
+    transfer_file_from_peer(node, peer, &format!("jobs/{job_id}/outputs.gpk"), &pack).await?;
     unpack_archive(&pack, dest)?;
     let _ = std::fs::remove_file(&pack);
     Ok(())
@@ -847,7 +841,9 @@ async fn execute_remote_job(
     match package_workdir(&work_for_pack, &out) {
         Ok(m) => info!(
             "packed job {} outputs: {} files, {} bytes",
-            result.job_id, m.files.len(), m.total_bytes
+            result.job_id,
+            m.files.len(),
+            m.total_bytes
         ),
         Err(e) => warn!("failed to pack job {} outputs: {e}", result.job_id),
     }

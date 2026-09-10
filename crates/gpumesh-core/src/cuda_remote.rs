@@ -41,10 +41,7 @@ impl CudaSession {
         &self.backend.backend_name
     }
 
-    fn exec(
-        &mut self,
-        op: CudaOpKind,
-    ) -> (bool, Option<String>, crate::cuda_backend::CudaPartial) {
+    fn exec(&mut self, op: CudaOpKind) -> (bool, Option<String>, crate::cuda_backend::CudaPartial) {
         self.backend.exec(op)
     }
 }
@@ -157,8 +154,7 @@ pub async fn handle_gpu_remote_open(
         max_alloc_bytes: max_alloc,
         devices,
         lan_warning:
-            "CUDA remoting is LAN-oriented (R3). WAN Runtime remoting is usually too slow."
-                .into(),
+            "CUDA remoting is LAN-oriented (R3). WAN Runtime remoting is usually too slow.".into(),
     })
     .await?;
     info!("CUDA remoting session {session_id} opened for {peer_id}");
@@ -377,10 +373,7 @@ impl CudaRemoteClient {
     }
 
     pub async fn vector_add_f32(&mut self, a: u64, b: u64, out: u64, n: u32) -> Result<u64> {
-        let r = Self::unwrap_ok(
-            self.call(CudaOpKind::VectorAddF32 { a, b, out, n })
-                .await?,
-        )?;
+        let r = Self::unwrap_ok(self.call(CudaOpKind::VectorAddF32 { a, b, out, n }).await?)?;
         Ok(r.elapsed_us)
     }
 
@@ -544,7 +537,11 @@ pub async fn run_demo(node: &MeshNode, peer: &str, n: u32) -> Result<DemoReport>
     // Verify a few elements
     let mut ok = got.len() == ha.len();
     if ok {
-        for i in [0usize, (n as usize / 2).saturating_sub(1), (n as usize).saturating_sub(1)] {
+        for i in [
+            0usize,
+            (n as usize / 2).saturating_sub(1),
+            (n as usize).saturating_sub(1),
+        ] {
             if i >= n as usize {
                 continue;
             }
@@ -669,13 +666,17 @@ mod tests {
 
     #[test]
     fn vector_add_session_local() {
-        let mut s = CudaSession::new("t".into(), 64 * 1024 * 1024, vec![CudaDeviceInfo {
-            index: 0,
-            name: "test".into(),
-            vram_total_mb: 8192,
-            vram_free_mb: 7000,
-            compute_capability: Some("8.9".into()),
-        }]);
+        let mut s = CudaSession::new(
+            "t".into(),
+            64 * 1024 * 1024,
+            vec![CudaDeviceInfo {
+                index: 0,
+                name: "test".into(),
+                vram_total_mb: 8192,
+                vram_free_mb: 7000,
+                compute_capability: Some("8.9".into()),
+            }],
+        );
         let (ok, _, p) = s.exec(CudaOpKind::Malloc { bytes: 16 });
         assert!(ok);
         let a = p.ptr.unwrap();
@@ -694,15 +695,11 @@ mod tests {
         }
         assert!(s.exec(CudaOpKind::MemcpyHtoD { dst: a, data: ha }).0);
         assert!(s.exec(CudaOpKind::MemcpyHtoD { dst: b, data: hb }).0);
-        assert!(s
-            .exec(CudaOpKind::VectorAddF32 {
-                a,
-                b,
-                out,
-                n: 4
-            })
-            .0);
-        let (ok, _, p) = s.exec(CudaOpKind::MemcpyDtoH { src: out, bytes: 16 });
+        assert!(s.exec(CudaOpKind::VectorAddF32 { a, b, out, n: 4 }).0);
+        let (ok, _, p) = s.exec(CudaOpKind::MemcpyDtoH {
+            src: out,
+            bytes: 16,
+        });
         assert!(ok);
         let data = p.data.unwrap();
         let v0 = f32::from_le_bytes(data[0..4].try_into().unwrap());

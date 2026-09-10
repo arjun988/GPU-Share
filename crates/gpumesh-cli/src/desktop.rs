@@ -47,7 +47,10 @@ pub async fn dispatch(cmd: DesktopCmd) -> Result<()> {
             match detect_backend(&[]).await {
                 Some(b) => {
                     ui::ok(format!("Found {} on 127.0.0.1:{}", b.name, b.host_port));
-                    ui::dim(&b.viewer_hint.replace("LOCAL_PORT", &b.suggest_local_port.to_string()));
+                    ui::dim(
+                        &b.viewer_hint
+                            .replace("LOCAL_PORT", &b.suggest_local_port.to_string()),
+                    );
                 }
                 None => {
                     ui::warn("No RDP (:3389) or VNC (:5900) detected on localhost.");
@@ -68,7 +71,10 @@ async fn share() -> Result<()> {
 
     match detect_backend(&[]).await {
         Some(b) => {
-            ui::ok(format!("Desktop backend: {} → 127.0.0.1:{}", b.name, b.host_port));
+            ui::ok(format!(
+                "Desktop backend: {} → 127.0.0.1:{}",
+                b.name, b.host_port
+            ));
             ui::dim(&b.viewer_hint.replace("LOCAL_PORT", "(client local port)"));
         }
         None => {

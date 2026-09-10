@@ -41,8 +41,8 @@ fn stream() -> std::io::Result<std::sync::MutexGuard<'static, Option<TcpStream>>
     let slot = BRIDGE.get_or_init(|| Mutex::new(None));
     let mut g = slot.lock().unwrap();
     if g.is_none() {
-        let addr = std::env::var("GPUMESH_CUDA_BRIDGE")
-            .unwrap_or_else(|_| "127.0.0.1:17999".into());
+        let addr =
+            std::env::var("GPUMESH_CUDA_BRIDGE").unwrap_or_else(|_| "127.0.0.1:17999".into());
         let s = TcpStream::connect(addr)?;
         s.set_nodelay(true)?;
         *g = Some(s);
@@ -213,7 +213,12 @@ pub extern "C" fn cudaDeviceSynchronize() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn gpumeshVectorAddF32(a: *mut std::ffi::c_void, b: *mut std::ffi::c_void, out: *mut std::ffi::c_void, n: u32) -> i32 {
+pub extern "C" fn gpumeshVectorAddF32(
+    a: *mut std::ffi::c_void,
+    b: *mut std::ffi::c_void,
+    out: *mut std::ffi::c_void,
+    n: u32,
+) -> i32 {
     match rpc(&BridgeReq {
         op: "vector_add_f32".into(),
         bytes: None,
