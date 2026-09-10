@@ -172,7 +172,7 @@ pub async fn dispatch(cmd: GroupCmd) -> Result<()> {
             ui::ok(format!("Joined group '{}'", invite.group_name));
             let owner_is_paired = node.peers.read().await.get(&invite.owner_node_id).is_some();
             if owner_is_paired {
-                if let Err(e) = node.start_network().await {
+                if let Err(e) = node.ensure_dialer().await {
                     ui::warn(format!("Joined locally; could not start owner sync: {e}"));
                 } else {
                     let canonical = serde_json::to_vec(&(
@@ -190,8 +190,13 @@ pub async fn dispatch(cmd: GroupCmd) -> Result<()> {
                         public_key_hex: node.identity.public_key_hex(),
                         signature: node.identity.sign_b64(&canonical),
                     };
-                    match node.connect_peer(&invite.owner_node_id).await {
-                        Ok(conn) => {
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        node.connect_peer(&invite.owner_node_id),
+                    )
+                    .await
+                    {
+                        Ok(Ok(conn)) => {
                             if let Err(e) = conn.send(notify).await {
                                 ui::warn(format!("Joined locally; owner sync failed: {e}"));
                             } else {
@@ -199,9 +204,12 @@ pub async fn dispatch(cmd: GroupCmd) -> Result<()> {
                             }
                             conn.close();
                         }
-                        Err(e) => ui::warn(format!(
+                        Ok(Err(e)) => ui::warn(format!(
                             "Joined locally; owner is currently unreachable: {e}"
                         )),
+                        Err(_) => ui::warn(
+                            "Joined locally; owner did not respond (start `gpumesh share` on the owner to sync members).",
+                        ),
                     }
                 }
             } else {

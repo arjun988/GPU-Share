@@ -46,7 +46,7 @@ pub async fn schedule_peer(node: &MeshNode, req: ScheduleRequest) -> Result<Sche
             }
         }
 
-        let probe = tokio::time::timeout(Duration::from_secs(3), probe_peer(node, &node_id)).await;
+        let probe = tokio::time::timeout(Duration::from_secs(8), probe_peer(node, &node_id)).await;
         let info = match probe {
             Ok(Ok(info)) => info,
             Ok(Err(e)) => {

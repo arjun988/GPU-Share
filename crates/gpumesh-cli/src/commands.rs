@@ -116,8 +116,7 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
         } => search_public(gpu, vram, cuda, region, idle, json).await,
         Commands::PairCode => {
             ui::print_banner();
-            let mut node = MeshNode::bootstrap().await?;
-            node.start_network().await?;
+            let node = MeshNode::bootstrap().await?;
             let code = node.pairing_code().await?;
             ui::ok("Pairing code (share out-of-band):");
             println!();
@@ -145,13 +144,18 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
         Commands::Peers => {
             ui::print_banner();
             let mut node = MeshNode::bootstrap().await?;
-            let _ = node.start_network().await;
-            let store = node.peers.read().await;
-            let list = store.list();
+            let _ = node.ensure_dialer().await;
+            // Clone records and drop the peers lock before probing. connect_peer()
+            // needs a write lock to update last_seen; holding the read lock deadlocks
+            // and every peer looks OFFLINE.
+            let list: Vec<_> = {
+                let store = node.peers.read().await;
+                store.list().into_iter().cloned().collect()
+            };
             let mut live = Vec::new();
             for p in &list {
                 let status = match tokio::time::timeout(
-                    Duration::from_secs(3),
+                    Duration::from_secs(8),
                     try_probe(&node, &p.node_id),
                 )
                 .await
@@ -164,14 +168,15 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
                 };
                 live.push((p.node_id.clone(), status, p.gpu_model.clone(), p.vram_mb));
             }
-            print!("{}", format_peers_table(&list, &live));
+            let refs: Vec<_> = list.iter().collect();
+            print!("{}", format_peers_table(&refs, &live));
             Ok(())
         }
         Commands::Connect { peer } => {
             ui::print_banner();
             let spinner = ui::spinner(&format!("Connecting to {peer}…"));
             let mut node = MeshNode::bootstrap().await?;
-            node.start_network().await?;
+            node.ensure_dialer().await?;
             let conn = node.connect_peer(&peer).await?;
             spinner.finish_and_clear();
             ui::ok(format!(
@@ -284,7 +289,7 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
             };
 
             if group.is_some() || gpu_memory.is_some() {
-                node.start_network().await?;
+                node.ensure_dialer().await?;
                 let spinner = ui::spinner("Scheduling peer…");
                 let chosen = schedule_peer(
                     &node,
@@ -326,7 +331,7 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
                 let _ = rec.save();
 
                 let result = if let Some(ref peer_name) = peer {
-                    node.start_network().await?;
+                    node.ensure_dialer().await?;
                     run_remote_job(
                         &node,
                         peer_name,
@@ -469,7 +474,7 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
         Commands::Cancel { peer, job_id } => {
             let peer = peer.context("pass --peer <name> (or set GPUMESH_PEER)")?;
             let mut node = MeshNode::bootstrap().await?;
-            node.start_network().await?;
+            node.ensure_dialer().await?;
             let conn = node.connect_peer(&peer).await?;
             conn.send(Message::CancelJob {
                 job_id: job_id.clone(),
@@ -496,7 +501,7 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
         }
         Commands::Cp { src, dst } => {
             let mut node = MeshNode::bootstrap().await?;
-            node.start_network().await?;
+            node.ensure_dialer().await?;
             if let Some((peer, remote)) = split_remote(&src) {
                 transfer_file_from_peer(&node, peer, remote, &PathBuf::from(&dst)).await?;
                 ui::ok(format!("Downloaded {src} → {dst}"));
@@ -511,7 +516,7 @@ pub async fn dispatch(cmd: Commands) -> Result<()> {
         Commands::Exec { peer, shell, image } => {
             ui::warn("exec runs an isolated container shell (not host SSH)");
             let mut node = MeshNode::bootstrap().await?;
-            node.start_network().await?;
+            node.ensure_dialer().await?;
             let code = run_remote_job(
                 &node,
                 &peer,

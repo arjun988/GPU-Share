@@ -56,6 +56,16 @@ impl NetworkEndpoint {
         addrs
     }
 
+    /// Addresses peers should dial for *this node's share port* (not an ephemeral dialer).
+    pub fn advertised_share_addrs(port: u16) -> Vec<String> {
+        let mut addrs = Vec::new();
+        if let Ok(ip) = local_ip_address::local_ip() {
+            addrs.push(format!("{ip}:{port}"));
+        }
+        addrs.push(format!("127.0.0.1:{port}"));
+        addrs
+    }
+
     pub async fn accept(&self) -> Result<PeerConnection> {
         let incoming = self
             .endpoint

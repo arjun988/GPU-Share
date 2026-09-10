@@ -124,7 +124,7 @@ async fn demo(peer: String, n: u32) -> Result<()> {
     }
 
     let mut node = MeshNode::bootstrap().await?;
-    node.start_network().await?;
+    node.ensure_dialer().await?;
     ui::info(format!("Opening remoting session to {peer}…"));
     let report = run_demo(&node, &peer, n).await?;
 
@@ -162,7 +162,7 @@ async fn bench(peer: String, iters: u32) -> Result<()> {
         bail!("--iters must be 1..=10000");
     }
     let mut node = MeshNode::bootstrap().await?;
-    node.start_network().await?;
+    node.ensure_dialer().await?;
     ui::info(format!("Benchmarking remoting to {peer} ({iters} iters)…"));
     let report = run_bench(&node, &peer, iters).await?;
 
@@ -183,7 +183,7 @@ async fn bridge(peer: String, bind: String) -> Result<()> {
     ui::print_banner();
     ui::warn("Bridge is for the libcudart stub — keep `gpumesh cuda share` running on the host.");
     let mut node = MeshNode::bootstrap().await?;
-    node.start_network().await?;
+    node.ensure_dialer().await?;
     run_bridge(&node, &peer, &bind).await?;
     Ok(())
 }

@@ -161,7 +161,7 @@ async fn sync_project(peer: &str, dir: &str, name: Option<&str>) -> Result<()> {
     let name = project_name(&root, name);
 
     let mut node = MeshNode::bootstrap().await?;
-    node.start_network().await?;
+    node.ensure_dialer().await?;
 
     let pack = gpumesh_common::work_dir()
         .join("packs")
@@ -224,7 +224,7 @@ async fn run(
     let cfg = node.config.read().await.clone();
 
     if group.is_some() || gpu_memory.is_some() {
-        node.start_network().await?;
+        node.ensure_dialer().await?;
         let spinner = ui::spinner("Scheduling peer…");
         let chosen = schedule_peer(
             &node,
@@ -245,7 +245,7 @@ async fn run(
     }
 
     let peer_name = peer.context("pass --peer <name> (or --group / set GPUMESH_PEER)")?;
-    node.start_network().await?;
+    node.ensure_dialer().await?;
 
     ui::section("Remote app");
     ui::kv("Peer", &peer_name);
@@ -334,7 +334,7 @@ async fn pull(peer: &str, job: Option<&str>, remote: Option<&str>, dir: &str) ->
     std::fs::create_dir_all(&dest)?;
 
     let mut node = MeshNode::bootstrap().await?;
-    node.start_network().await?;
+    node.ensure_dialer().await?;
 
     if let Some(remote) = remote {
         let local = if remote

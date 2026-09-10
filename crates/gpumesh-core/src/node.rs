@@ -248,11 +248,7 @@ impl MeshNode {
     pub async fn pairing_code(&self) -> Result<String> {
         let cfg = self.config.read().await.clone();
         let gpus = GpuMonitor::detect().unwrap_or_default();
-        let addrs = self
-            .endpoint
-            .as_ref()
-            .map(|e| e.local_addrs())
-            .unwrap_or_else(|| vec![format!("127.0.0.1:{}", cfg.listen_port)]);
+        let addrs = NetworkEndpoint::advertised_share_addrs(cfg.listen_port);
         let payload = PairingPayload {
             version: 1,
             node_id: self.identity.node_id.clone(),

@@ -28,7 +28,7 @@ pub async fn dispatch(cmd: DesktopCmd) -> Result<()> {
         DesktopCmd::Connect { peer, port } => {
             ui::print_banner();
             let mut node = MeshNode::bootstrap().await?;
-            node.start_network().await?;
+            node.ensure_dialer().await?;
             ui::info(format!("Connecting desktop to {peer}…"));
             connect_desktop(&node, &peer, port).await?;
             Ok(())
