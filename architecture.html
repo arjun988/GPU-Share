@@ -1,0 +1,981 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>GPUMesh Architecture</title>
+<style>
+/* ── Reset & Tokens ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --radius: 10px;
+  --radius-sm: 6px;
+  --gap: 32px;
+  --transition: 0.25s ease;
+}
+
+[data-theme="dark"] {
+  --bg:        #0d1117;
+  --surface:   #161b22;
+  --surface2:  #21262d;
+  --border:    #30363d;
+  --text:      #e6edf3;
+  --text-muted:#8b949e;
+  --blue:      #58a6ff;
+  --blue-bg:   #1f3a5c;
+  --blue-bd:   #388bfd;
+  --green:     #3fb950;
+  --green-bg:  #1a3a2a;
+  --green-bd:  #2ea043;
+  --yellow:    #d29922;
+  --yellow-bg: #2d2208;
+  --yellow-bd: #9e6a03;
+  --purple:    #bc8cff;
+  --purple-bg: #2d1f4e;
+  --purple-bd: #8957e5;
+  --orange:    #f0883e;
+  --orange-bg: #3d1f00;
+  --orange-bd: #d18616;
+  --red:       #f85149;
+  --red-bg:    #3d1515;
+  --shadow:    0 4px 24px rgba(0,0,0,0.4);
+}
+
+[data-theme="light"] {
+  --bg:        #f6f8fa;
+  --surface:   #ffffff;
+  --surface2:  #f0f2f4;
+  --border:    #d0d7de;
+  --text:      #1f2328;
+  --text-muted:#636c76;
+  --blue:      #0969da;
+  --blue-bg:   #dbeafe;
+  --blue-bd:   #0969da;
+  --green:     #1a7f37;
+  --green-bg:  #dcfce7;
+  --green-bd:  #1a7f37;
+  --yellow:    #9a6700;
+  --yellow-bg: #fef9c3;
+  --yellow-bd: #9a6700;
+  --purple:    #7c3aed;
+  --purple-bg: #f3e8ff;
+  --purple-bd: #7c3aed;
+  --orange:    #bc4c00;
+  --orange-bg: #fff7ed;
+  --orange-bd: #bc4c00;
+  --red:       #cf222e;
+  --red-bg:    #ffebe9;
+  --shadow:    0 4px 24px rgba(0,0,0,0.08);
+}
+
+/* ── Base ───────────────────────────────────────────────────── */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  padding: 24px;
+  transition: background var(--transition), color var(--transition);
+  min-width: 900px;
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 28px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.header-left h1 {
+  font-size: 1.45rem;
+  font-weight: 700;
+  color: var(--blue);
+  letter-spacing: -0.3px;
+}
+.header-left p {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+.toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+.toggle-btn:hover { border-color: var(--blue); color: var(--blue); }
+.toggle-btn .icon { font-size: 1rem; }
+
+/* ── Section titles ─────────────────────────────────────────── */
+.section-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.section-title .pill {
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 2px 10px;
+  border-radius: 20px;
+  background: var(--surface2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+/* ── Card ───────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px 28px;
+  box-shadow: var(--shadow);
+  transition: background var(--transition), border-color var(--transition);
+}
+
+/* ── Layout ─────────────────────────────────────────────────── */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gap);
+  margin-bottom: var(--gap);
+}
+.full-col { margin-bottom: var(--gap); }
+
+/* ── Flow diagrams (HTML-based) ──────────────────────────────── */
+.flow {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.flow-node {
+  border-radius: var(--radius-sm);
+  padding: 11px 18px;
+  border: 1.5px solid;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  width: 100%;
+}
+.flow-node .node-title { font-size: 0.9rem; font-weight: 600; }
+.flow-node .node-sub   { font-size: 0.72rem; margin-top: 2px; opacity: 0.75; }
+
+.node-blue   { background: var(--blue-bg);   border-color: var(--blue-bd);   color: var(--blue);   }
+.node-green  { background: var(--green-bg);  border-color: var(--green-bd);  color: var(--green);  }
+.node-yellow { background: var(--yellow-bg); border-color: var(--yellow-bd); color: var(--yellow); }
+.node-purple { background: var(--purple-bg); border-color: var(--purple-bd); color: var(--purple); }
+.node-orange { background: var(--orange-bg); border-color: var(--orange-bd); color: var(--orange); }
+.node-gray   { background: var(--surface2);  border-color: var(--border);    color: var(--text);   }
+
+/* Row of nodes side by side */
+.node-row {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 0;
+}
+.node-row-3 { grid-template-columns: 1fr 1fr 1fr; }
+.node-row-2 { grid-template-columns: 1fr 1fr; }
+
+/* Connectors */
+.arrow-down {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 4px 0;
+  gap: 0;
+}
+.arrow-down .arrow-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.arrow-down::after {
+  content: '';
+  display: block;
+  width: 2px;
+  height: 20px;
+  background: var(--border);
+  position: relative;
+}
+.arrow-line {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 0;
+}
+.arrow-line-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  padding: 2px 0;
+}
+.vline {
+  width: 2px;
+  background: var(--border);
+}
+
+/* Step block */
+.step-block {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
+  width: 100%;
+}
+.step-block .step-num {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.step-block .step-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.step-block .step-desc {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 3px;
+  line-height: 1.45;
+}
+
+/* Step with variant */
+.step-block.blue  { border-left: 3px solid var(--blue);   }
+.step-block.green { border-left: 3px solid var(--green);  }
+.step-block.yellow{ border-left: 3px solid var(--yellow); }
+.step-block.purple{ border-left: 3px solid var(--purple); }
+.step-block.orange{ border-left: 3px solid var(--orange); }
+
+/* OR divider */
+.or-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  padding: 4px 0;
+}
+.or-divider::before, .or-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* Spacer arrow */
+.spacer { height: 18px; position: relative; display: flex; align-items: center; justify-content: center; }
+.spacer::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: 100%;
+  background: var(--border);
+}
+.spacer-arrow {
+  width: 10px; height: 10px;
+  border-right: 2px solid var(--border);
+  border-bottom: 2px solid var(--border);
+  transform: rotate(45deg);
+  background: var(--bg);
+  z-index: 1;
+  margin-top: 8px;
+}
+
+/* ── Crate map ───────────────────────────────────────────────── */
+.crate-map {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.crate-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.crate-row-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.crate-row-nodes {
+  display: grid;
+  gap: 10px;
+}
+.crate-node {
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  border: 1.5px solid;
+  display: flex;
+  flex-direction: column;
+}
+.crate-node .cn-name { font-size: 0.85rem; font-weight: 600; }
+.crate-node .cn-desc { font-size: 0.7rem; margin-top: 2px; opacity: 0.75; }
+
+.binaries-row  { grid-template-columns: repeat(4, 1fr); }
+.core-row      { grid-template-columns: 1fr; max-width: 300px; margin: 0 auto; }
+.libs-row      { grid-template-columns: repeat(4, 1fr); }
+.libs-row-2    { grid-template-columns: repeat(3, 1fr); }
+
+/* dep arrow between rows */
+.dep-connector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  gap: 8px;
+}
+.dep-connector::before, .dep-connector::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ── Table ───────────────────────────────────────────────────── */
+.arch-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.arch-table th {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+}
+.arch-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  color: var(--text);
+  line-height: 1.5;
+}
+.arch-table tr:last-child td { border-bottom: none; }
+.arch-table tr:hover td { background: var(--surface2); }
+
+.tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tag-blue   { background: var(--blue-bg);   color: var(--blue);   border: 1px solid var(--blue-bd); }
+.tag-green  { background: var(--green-bg);  color: var(--green);  border: 1px solid var(--green-bd); }
+.tag-purple { background: var(--purple-bg); color: var(--purple); border: 1px solid var(--purple-bd); }
+.tag-yellow { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow-bd); }
+.tag-orange { background: var(--orange-bg); color: var(--orange); border: 1px solid var(--orange-bd); }
+.tag-gray   { background: var(--surface2);  color: var(--text-muted); border: 1px solid var(--border); }
+
+code {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.78rem;
+  background: var(--surface2);
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+/* ── Group box ───────────────────────────────────────────────── */
+.group-box {
+  border: 1.5px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 12px;
+  background: var(--surface2);
+}
+.group-box-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+/* ── Auth row ─────────────────────────────────────────────────── */
+.auth-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin-top: 8px;
+}
+.auth-item {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  text-align: center;
+}
+.auth-item .ai-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.auth-item .ai-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-top: 2px;
+}
+
+/* ── Legend ──────────────────────────────────────────────────── */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 14px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: var(--gap);
+}
+.legend-item { display: flex; align-items: center; gap: 8px; }
+.legend-dot {
+  width: 12px; height: 12px; border-radius: 3px;
+  flex-shrink: 0; border: 1.5px solid;
+}
+
+/* ── Responsive ──────────────────────────────────────────────── */
+@media (max-width: 980px) {
+  .two-col { grid-template-columns: 1fr; }
+  .binaries-row, .libs-row { grid-template-columns: repeat(2, 1fr); }
+  .auth-row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────── -->
+<div class="header">
+  <div class="header-left">
+    <h1>GPUMesh Architecture</h1>
+    <p>Peer-to-peer connection lifecycle · Group scheduler · Crate dependency map</p>
+  </div>
+  <button class="toggle-btn" onclick="toggleTheme()">
+    <span class="icon" id="theme-icon">☀️</span>
+    <span id="theme-label">Light Mode</span>
+  </button>
+</div>
+
+<!-- ── Row 1: P2P  +  Group Flow ───────────────────────────── -->
+<div class="two-col">
+
+  <!-- LEFT: P2P Connection Lifecycle -->
+  <div class="card">
+    <div class="section-title">
+      P2P Connection Lifecycle
+      <span class="pill">gpumesh-network · gpumesh-core</span>
+    </div>
+
+    <div class="flow">
+
+      <!-- Step 1: Discovery -->
+      <div class="step-block blue">
+        <div class="step-num">Step 1 — Discovery</div>
+        <div class="step-title">Peer Discovery</div>
+        <div class="step-desc">
+          LAN: mDNS broadcast on <code>_gpumesh._udp.local</code> — automatic, zero config.<br>
+          WAN: HTTP Rendezvous <code>GET /v1/peers/{node_id}</code> — requires configured server.
+        </div>
+      </div>
+
+      <div class="spacer"><div class="spacer-arrow"></div></div>
+
+      <!-- Step 2: Actors -->
+      <div class="node-row node-row-3">
+        <div class="flow-node node-blue">
+          <div class="node-title">Consumer</div>
+          <div class="node-sub">MeshNode (client side)</div>
+        </div>
+        <div class="flow-node node-yellow" style="border-style:dashed">
+          <div class="node-title">Relay Server</div>
+          <div class="node-sub">optional fallback only</div>
+        </div>
+        <div class="flow-node node-green">
+          <div class="node-title">Provider</div>
+          <div class="node-sub">MeshNode (server side)</div>
+        </div>
+      </div>
+
+      <div class="spacer"><div class="spacer-arrow"></div></div>
+
+      <!-- Step 3: Dial -->
+      <div class="step-block blue">
+        <div class="step-num">Step 2 — Transport</div>
+        <div class="step-title">dial_with_fallback</div>
+        <div class="step-desc">
+          <strong>Primary:</strong> QUIC direct dial — <code>ConnectionMode::Direct</code><br>
+          <strong>Fallback:</strong> QUIC via relay if <code>GPUMESH_RELAY</code> env is set — <code>ConnectionMode::Relay</code>
+        </div>
+      </div>
+
+      <div class="spacer"><div class="spacer-arrow"></div></div>
+
+      <!-- Step 4: Handshake -->
+      <div class="step-block purple">
+        <div class="step-num">Step 3 — Identity Handshake</div>
+        <div class="step-title">TLS 1.3 + Ed25519 Verification</div>
+        <div class="step-desc">
+          Client sends <code>Hello</code> → Server replies <code>HelloAck</code><br>
+          Payload: node_id · public_key_hex · GPU model · VRAM · Ed25519 signature · timestamp TTL<br>
+          Server verifies: signature validity · pubkey↔node_id binding · freshness window
+        </div>
+      </div>
+
+      <div class="spacer"><div class="spacer-arrow"></div></div>
+
+      <!-- Step 5: Auth -->
+      <div class="step-block orange">
+        <div class="step-num">Step 4 — Authorization</div>
+        <div class="step-title">AllowList Check (provider side)</div>
+        <div class="step-desc">Three independent permission buckets — all checked before session opens</div>
+        <div class="auth-row">
+          <div class="auth-item">
+            <div class="ai-label">Job</div>
+            <div class="ai-name">run containers</div>
+          </div>
+          <div class="auth-item">
+            <div class="ai-label">Desktop</div>
+            <div class="ai-name">GUI tunnel</div>
+          </div>
+          <div class="auth-item">
+            <div class="ai-label">GPU Remote</div>
+            <div class="ai-name">CUDA remoting</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="spacer"><div class="spacer-arrow"></div></div>
+
+      <!-- Step 6: Session -->
+      <div class="step-block green">
+        <div class="step-num">Step 5 — Session (JSON-framed QUIC stream)</div>
+        <div class="step-title">Bidirectional Message Exchange</div>
+        <div class="step-desc">
+          All messages framed as <code>[u32 BE length][UTF-8 JSON]</code>, max 64 MiB per frame
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:10px;">
+          <div class="auth-item"><div class="ai-label">Compute</div><div class="ai-name">RunJob · FileOffer</div></div>
+          <div class="auth-item"><div class="ai-label">Streaming</div><div class="ai-name">JobLog · JobStatus</div></div>
+          <div class="auth-item"><div class="ai-label">Extended</div><div class="ai-name">CudaOp · Desktop</div></div>
+        </div>
+      </div>
+
+      <div class="spacer"><div class="spacer-arrow"></div></div>
+
+      <!-- Step 7: Execution -->
+      <div class="step-block green">
+        <div class="step-num">Step 6 — Execution</div>
+        <div class="step-title">DockerRuntime + GPU Limits</div>
+        <div class="step-desc">
+          VRAM check · utilization cap · allowed image list · container hardening · output packaging → <code>outputs.gpk</code>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- RIGHT: Group / Cluster Scheduler -->
+  <div class="card">
+    <div class="section-title">
+      Group (Cluster) Scheduler Flow
+      <span class="pill">gpumesh-storage · scheduler</span>
+    </div>
+
+    <div class="flow">
+
+      <!-- Group membership -->
+      <div class="group-box">
+        <div class="group-box-label">Group Membership — groups.json</div>
+        <div class="node-row node-row-3">
+          <div class="flow-node node-blue">
+            <div class="node-title">Owner</div>
+            <div class="node-sub">GroupRole::Owner<br>creates invite</div>
+          </div>
+          <div class="flow-node node-green">
+            <div class="node-title">Member A</div>
+            <div class="node-sub">GroupRole::Member<br>shares GPU</div>
+          </div>
+          <div class="flow-node node-green">
+            <div class="node-title">Member B</div>
+            <div class="node-sub">GroupRole::Member<br>shares GPU</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Invite flow -->
+      <div class="step-block yellow">
+        <div class="step-num">Invite / Join Flow</div>
+        <div class="step-title">Signed Invite Token</div>
+        <div class="step-desc">
+          Owner generates base64-encoded <code>GroupInvite</code> (Ed25519 signed, TTL-limited).<br>
+          Joiner sends <code>GroupJoinNotify</code> to owner's QUIC endpoint.<br>
+          Owner verifies: signature · pubkey↔node_id · group_id match → adds to members list.
+        </div>
+      </div>
+
+      <div class="spacer"><div class="spacer-arrow"></div></div>
+
+      <!-- schedule_peer -->
+      <div class="step-block blue">
+        <div class="step-num">Scheduler Entry</div>
+        <div class="step-title">schedule_peer(group, gpu_memory_mb)</div>
+        <div class="step-desc">Selects the best available member for a job submission</div>
+      </div>
+
+      <div class="spacer"><div class="spacer-arrow"></div></div>
+
+      <!-- Step 1 candidates -->
+      <div class="step-block blue">
+        <div class="step-num">Stage 1 — Filter</div>
+        <div class="step-title">candidate_peers</div>
+        <div class="step-desc">
+          Load all paired peers from <code>PeerStore</code>.<br>
+          If <code>group</code> specified: intersect with <code>GroupStore</code> member IDs.
+        </div>
+      </div>
+
+      <div class="spacer"><div class="spacer-arrow"></div></div>
+
+      <!-- Step 2 probe -->
+      <div class="step-block purple">
+        <div class="step-num">Stage 2 — Probe (8s timeout per peer)</div>
+        <div class="step-title">probe_peer → PeerInfoRequest</div>
+        <div class="step-desc">
+          Opens a QUIC connection to each candidate.<br>
+          Receives: <code>PeerInfoMsg</code> — GPU model, free VRAM, utilization, sharing status.<br>
+          Skips peers that are Busy, Offline, or have insufficient free VRAM.
+        </div>
+      </div>
+
+      <div class="spacer"><div class="spacer-arrow"></div></div>
+
+      <!-- Step 3 scoring -->
+      <div class="step-block orange">
+        <div class="step-num">Stage 3 — Scoring</div>
+        <div class="step-title">Score = free_vram + idle_bonus + (100 − util) × 10 + prefer_boost</div>
+        <div class="step-desc">
+          <code>+free VRAM mb</code> base score &nbsp;·&nbsp;
+          <code>+10 000</code> if Idle &nbsp;·&nbsp;
+          <code>+(100−util)×10</code> low utilization bonus &nbsp;·&nbsp;
+          <code>+50 000</code> if matches <code>prefer_peer</code>
+        </div>
+      </div>
+
+      <div class="spacer"><div class="spacer-arrow"></div></div>
+
+      <!-- Best peer -->
+      <div class="flow-node node-green" style="padding:14px 18px;">
+        <div class="node-title" style="font-size:1rem;">ScheduleResult — Best Peer Selected</div>
+        <div class="node-sub">peer_name · peer_node_id · gpu_model · vram_free_mb · status</div>
+      </div>
+
+      <div class="spacer"><div class="spacer-arrow"></div></div>
+
+      <!-- run_remote_job -->
+      <div class="step-block green">
+        <div class="step-num">Stage 4 — Execution</div>
+        <div class="step-title">run_remote_job → selected peer</div>
+        <div class="step-desc">
+          Package workdir → <code>upload.gpk</code><br>
+          Send <code>FileOffer</code> + <code>RunJob</code> request<br>
+          Stream <code>JobLog</code> back in real-time<br>
+          On success: <code>pull_artifacts</code> downloads <code>outputs.gpk</code>
+        </div>
+      </div>
+
+      <div class="spacer"><div class="spacer-arrow"></div></div>
+
+      <!-- Persistence -->
+      <div class="group-box" style="margin-bottom:0">
+        <div class="group-box-label">Persistence (config dir)</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;">
+          <div class="auth-item"><div class="ai-label">Groups</div><div class="ai-name">groups.json</div></div>
+          <div class="auth-item"><div class="ai-label">Peers</div><div class="ai-name">peers.json</div></div>
+          <div class="auth-item"><div class="ai-label">Allow</div><div class="ai-name">allowlist.json</div></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Row 2: Crate Map ─────────────────────────────────────── -->
+<div class="full-col">
+  <div class="card">
+    <div class="section-title">
+      Crate Dependency Map
+      <span class="pill">full workspace</span>
+    </div>
+
+    <div class="crate-map">
+
+      <!-- Binaries -->
+      <div class="crate-row">
+        <div class="crate-row-label">Binaries — user-facing executables</div>
+        <div class="crate-row-nodes binaries-row">
+          <div class="crate-node node-purple">
+            <div class="cn-name">gpumesh-cli</div>
+            <div class="cn-desc">Main UX — pair, share, run, group, status</div>
+          </div>
+          <div class="crate-node node-purple">
+            <div class="cn-name">gpumesh-agent</div>
+            <div class="cn-desc">Background daemon — QUIC accept loop</div>
+          </div>
+          <div class="crate-node node-purple">
+            <div class="cn-name">gpumesh-control</div>
+            <div class="cn-desc">Local IPC control bridge</div>
+          </div>
+          <div class="crate-node node-purple">
+            <div class="cn-name">gpumesh-relay</div>
+            <div class="cn-desc">Optional WAN relay forwarder</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dep-connector">depends on</div>
+
+      <!-- Core -->
+      <div class="crate-row">
+        <div class="crate-row-label">Orchestration — domain logic</div>
+        <div class="crate-row-nodes" style="grid-template-columns:1fr 3fr; gap:10px;">
+          <div class="crate-node node-blue">
+            <div class="cn-name">gpumesh-core</div>
+            <div class="cn-desc">
+              MeshNode bootstrap · pairing · share/disable<br>
+              Inbound session dispatch · group scheduler<br>
+              CUDA remote · desktop tunnels
+            </div>
+          </div>
+          <div class="crate-node node-gray">
+            <div class="cn-name" style="color:var(--text)">What gpumesh-core orchestrates</div>
+            <div class="cn-desc" style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:8px;">
+              <div><strong style="color:var(--text)">node.rs</strong><br>MeshNode · bootstrap · share enable/disable · peer connect</div>
+              <div><strong style="color:var(--text)">scheduler.rs</strong><br>schedule_peer · score · probe · candidate filter</div>
+              <div><strong style="color:var(--text)">remote.rs</strong><br>run_remote_job · serve_peer_session · file transfer</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dep-connector">depends on</div>
+
+      <!-- Libraries row 1 -->
+      <div class="crate-row">
+        <div class="crate-row-label">Libraries — specialized crates</div>
+        <div class="crate-row-nodes libs-row">
+          <div class="crate-node node-green">
+            <div class="cn-name">gpumesh-network</div>
+            <div class="cn-desc">QUIC endpoint (Quinn) · mDNS LAN discovery · relay client · rendezvous HTTP · public registry</div>
+          </div>
+          <div class="crate-node node-green">
+            <div class="cn-name">gpumesh-protocol</div>
+            <div class="cn-desc">Wire <code>Message</code> enum · ProtocolHello · JsonFrameCodec (length-prefix, 64 MiB max)</div>
+          </div>
+          <div class="crate-node node-green">
+            <div class="cn-name">gpumesh-security</div>
+            <div class="cn-desc">Ed25519 NodeIdentity · Hello/pairing/invite signing · AllowList (job · desktop · gpu_remote)</div>
+          </div>
+          <div class="crate-node node-green">
+            <div class="cn-name">gpumesh-storage</div>
+            <div class="cn-desc">PeerStore · GroupStore · GroupInvite · JobRecord — JSON files in config dir</div>
+          </div>
+        </div>
+        <div class="crate-row-nodes libs-row-2" style="margin-top:10px;">
+          <div class="crate-node node-green">
+            <div class="cn-name">gpumesh-runtime</div>
+            <div class="cn-desc">DockerRuntime · JobRequest · log streaming · output packaging · GPU memory cap</div>
+          </div>
+          <div class="crate-node node-green">
+            <div class="cn-name">gpumesh-gpu</div>
+            <div class="cn-desc">GpuMonitor · NVML/nvidia-smi detection · VRAM & utilization sampling</div>
+          </div>
+          <div class="crate-node node-yellow">
+            <div class="cn-name">gpumesh-common</div>
+            <div class="cn-desc">Shared types (NodeConfig, PeerStatus, JobState) · GpuMeshError · path helpers · constants</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dep-connector" style="opacity:0.5">optional link</div>
+
+      <!-- Stub -->
+      <div class="crate-row">
+        <div class="crate-row-label">Stub</div>
+        <div class="crate-row-nodes" style="grid-template-columns:220px 1fr; gap:10px; align-items:start;">
+          <div class="crate-node node-gray">
+            <div class="cn-name">gpumesh-cudart-stub</div>
+            <div class="cn-desc">No-op CUDA runtime shim — used when real CUDA unavailable at compile time</div>
+          </div>
+          <div style="padding:10px 14px; color:var(--text-muted); font-size:0.78rem; line-height:1.6;">
+            All crates ultimately depend on <code>gpumesh-common</code> for error types and config structs.<br>
+            <code>gpumesh-security</code> is a zero-dependency leaf crate (only <code>ed25519-dalek</code> + crypto primitives).
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ── Row 3: Layer Reference Table ──────────────────────────── -->
+<div class="full-col">
+  <div class="card">
+    <div class="section-title">Layer Reference</div>
+    <table class="arch-table">
+      <thead>
+        <tr>
+          <th style="width:110px">Layer</th>
+          <th style="width:190px">Crate(s)</th>
+          <th>Responsibility</th>
+          <th style="width:240px">Key types / functions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="tag tag-purple">Binary</span></td>
+          <td>cli · agent · control · relay</td>
+          <td>CLI commands (pair, run, share, group), daemon accept-loop, IPC bridge, optional WAN relay forwarder</td>
+          <td><code>MeshNode</code></td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-blue">Core</span></td>
+          <td>gpumesh-core</td>
+          <td>Bootstrap, pairing, share/disable, inbound session dispatch, group scheduler, CUDA remote, desktop tunnels</td>
+          <td><code>MeshNode</code> · <code>schedule_peer</code> · <code>run_remote_job</code></td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-green">Network</span></td>
+          <td>gpumesh-network</td>
+          <td>QUIC endpoint (Quinn + TLS 1.3), mDNS LAN discovery, relay fallback dial, HTTP rendezvous signalling, public GPU registry</td>
+          <td><code>NetworkEndpoint</code> · <code>PeerConnection</code> · <code>LanDiscovery</code> · <code>RendezvousClient</code></td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-green">Protocol</span></td>
+          <td>gpumesh-protocol</td>
+          <td>Wire message enum covering all session message types, length-prefixed JSON codec</td>
+          <td><code>Message</code> · <code>ProtocolHello</code> · <code>JsonFrameCodec</code></td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-green">Security</span></td>
+          <td>gpumesh-security</td>
+          <td>Ed25519 identity generation/persistence, Hello/pairing/invite signing & verification, AllowList with three separate permission buckets</td>
+          <td><code>NodeIdentity</code> · <code>AllowList</code> · <code>PairingPayload</code> · <code>GroupInvite</code></td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-green">Storage</span></td>
+          <td>gpumesh-storage</td>
+          <td>JSON-backed peer registry, group membership with roles & invite codes, job log records</td>
+          <td><code>PeerStore</code> · <code>GroupStore</code> · <code>GroupRole</code> · <code>JobRecord</code></td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-green">Runtime</span></td>
+          <td>gpumesh-runtime</td>
+          <td>Docker container execution, GPU memory cap, utilization guard, log streaming, output archive packaging</td>
+          <td><code>DockerRuntime</code> · <code>JobRequest</code> · <code>ShareLimits</code></td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-green">GPU</span></td>
+          <td>gpumesh-gpu</td>
+          <td>GPU enumeration via NVML or nvidia-smi, VRAM total/free/used, utilization, temperature, CUDA version</td>
+          <td><code>GpuMonitor</code> · <code>GpuInfo</code></td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-yellow">Common</span></td>
+          <td>gpumesh-common</td>
+          <td>Shared types across all crates, error enum, path helpers, protocol constants (version, TTLs, ports)</td>
+          <td><code>NodeConfig</code> · <code>GpuMeshError</code> · <code>PeerStatus</code> · <code>JobState</code></td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-gray">Stub</span></td>
+          <td>gpumesh-cudart-stub</td>
+          <td>No-op CUDA runtime shim for builds without a real GPU or CUDA SDK</td>
+          <td>—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── Legend ───────────────────────────────────────────────── -->
+<div class="legend">
+  <div class="legend-item">
+    <div class="legend-dot" style="background:var(--blue-bg); border-color:var(--blue-bd)"></div>
+    Consumer / Core orchestration
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:var(--green-bg); border-color:var(--green-bd)"></div>
+    Provider node / library crates
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:var(--yellow-bg); border-color:var(--yellow-bd); border-style:dashed"></div>
+    Relay server (optional fallback)
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:var(--purple-bg); border-color:var(--purple-bd)"></div>
+    Binary executables
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:var(--orange-bg); border-color:var(--orange-bd)"></div>
+    Authorization / scoring steps
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background:var(--surface2); border-color:var(--border)"></div>
+    Data persistence / shared types
+  </div>
+</div>
+
+<script>
+function toggleTheme() {
+  const html = document.documentElement;
+  const isDark = html.getAttribute('data-theme') === 'dark';
+  html.setAttribute('data-theme', isDark ? 'light' : 'dark');
+  document.getElementById('theme-icon').textContent  = isDark ? '🌙' : '☀️';
+  document.getElementById('theme-label').textContent = isDark ? 'Dark Mode' : 'Light Mode';
+}
+</script>
+</body>
+</html>
